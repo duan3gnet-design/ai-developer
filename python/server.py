@@ -4,7 +4,7 @@ Chạy trên port 8765, nhận request từ Electron renderer qua axios
 """
 
 import os
-import json
+import shutil
 from pathlib import Path
 from typing import Optional, List
 
@@ -46,6 +46,40 @@ class WriteFileRequest(BaseModel):
     content: str
 
 
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+def delete_path(raw_path: str) -> dict:
+    """Xóa file hoặc thư mục, trả về kết quả."""
+    p = Path(raw_path.strip())
+    if not p.exists():
+        return {"path": str(p), "success": False, "error": "Không tìm thấy"}
+    try:
+        if p.is_dir():
+            shutil.rmtree(p)
+            print(f"[Agent] 🗑 Deleted dir : {p}")
+        else:
+            p.unlink()
+            print(f"[Agent] 🗑 Deleted file: {p}")
+        return {"path": str(p), "success": True}
+    except Exception as e:
+        print(f"[Agent] ✗ Failed to delete {p}: {e}")
+        return {"path": str(p), "success": False, "error": str(e)}
+
+
+def write_path(file_path: str, content: str) -> dict:
+    """Ghi nội dung vào file, tự phát hiện create/update."""
+    p = Path(file_path.strip())
+    actual_action = "update" if p.exists() else "create"
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        print(f"[Agent] ✓ {'Updated' if actual_action == 'update' else 'Created'}: {p}")
+        return {"path": str(p), "action": actual_action, "success": True}
+    except Exception as e:
+        print(f"[Agent] ✗ Failed to write {p}: {e}")
+        return {"path": str(p), "action": actual_action, "success": False, "error": str(e)}
+
+
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -56,8 +90,9 @@ def health():
 @app.post("/chat")
 async def chat(req: ChatRequest):
     """
-    Chat với AI — tự động ghi file nếu AI quyết định cần thiết.
-    Response: { reply, files_written: [{ path, action, success, error? }] }
+    Chat với AI — tự động ghi/xóa file nếu AI quyết định cần thiết.
+    Thứ tự: xóa file cũ trước → ghi file mới sau (đúng với rename/move).
+    Response: { reply, files_written, files_deleted }
     """
     try:
         result = await ai_agent.chat(
@@ -67,31 +102,24 @@ async def chat(req: ChatRequest):
             project_path=req.project_path
         )
 
-        reply = result.get("reply", "")
-        files_to_write = result.get("files_to_write", [])
-        files_written = []
+        reply         = result.get("reply", "")
+        files_to_write  = result.get("files_to_write", [])
+        files_to_delete = result.get("files_to_delete", [])
 
-        # Ghi từng file AI yêu cầu
+        # 1️⃣ Xóa trước — để tránh conflict khi đổi tên thư mục
+        files_deleted = [delete_path(p) for p in files_to_delete if p]
+
+        # 2️⃣ Ghi sau
+        files_written = []
         for f in files_to_write:
             file_path = f.get("path", "").strip()
-            content = f.get("content", "")
-            action = f.get("action", "create")
-
-            if not file_path or not content:
-                files_written.append({"path": file_path, "action": action, "success": False, "error": "Thiếu path hoặc content"})
+            content   = f.get("content", "")
+            if not file_path or content is None:
+                files_written.append({"path": file_path, "action": "unknown", "success": False, "error": "Thiếu path hoặc content"})
                 continue
+            files_written.append(write_path(file_path, content))
 
-            try:
-                path_obj = Path(file_path)
-                path_obj.parent.mkdir(parents=True, exist_ok=True)
-                path_obj.write_text(content, encoding="utf-8")
-                files_written.append({"path": file_path, "action": action, "success": True})
-                print(f"[Agent] {'✓ Wrote' if action == 'create' else '✓ Updated'}: {file_path}")
-            except Exception as e:
-                files_written.append({"path": file_path, "action": action, "success": False, "error": str(e)})
-                print(f"[Agent] ✗ Failed to write {file_path}: {e}")
-
-        return {"reply": reply, "files_written": files_written}
+        return {"reply": reply, "files_written": files_written, "files_deleted": files_deleted}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -113,10 +141,12 @@ async def analyze_project(req: AnalyzeRequest):
 @app.post("/write-file")
 async def write_file(req: WriteFileRequest):
     try:
-        path = Path(req.path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(req.content, encoding="utf-8")
-        return {"success": True, "path": str(path)}
+        result = write_path(req.path, req.content)
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result.get("error"))
+        return {"success": True, "path": result["path"]}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

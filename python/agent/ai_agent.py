@@ -29,31 +29,35 @@ Phong cách trả lời:
 /no_think
 """
 
-# System prompt đặc biệt cho chat có khả năng ghi file
 SYSTEM_WITH_WRITE = SYSTEM_BASE + """
-## Khả năng ghi file
+## Khả năng ghi và xóa file
 
-Khi user yêu cầu tạo file mới, sửa file, implement tính năng, refactor, hay bất kỳ thao tác nào cần thay đổi code — bạn PHẢI trả về JSON theo đúng format sau, KHÔNG trả về plain text:
+Khi user yêu cầu tạo, sửa, đổi tên, di chuyển, hay xóa file/thư mục — bạn PHẢI trả về JSON theo đúng format sau:
 
 ```json
 {
-  "reply": "Giải thích bằng tiếng Việt những gì bạn đã làm, tại sao, và hướng dẫn bước tiếp theo",
+  "reply": "Giải thích bằng tiếng Việt những gì bạn đã làm và tại sao",
   "files_to_write": [
     {
-      "path": "đường dẫn tuyệt đối đến file, ví dụ: E:\\\\Projects\\\\myapp\\\\src\\\\main\\\\java\\\\com\\\\example\\\\Service.java",
-      "content": "toàn bộ nội dung file, không được bỏ sót dòng nào",
-      "action": "create" hoặc "update"
+      "path": "đường dẫn tuyệt đối của file cần tạo hoặc ghi",
+      "content": "toàn bộ nội dung file, không được dùng placeholder"
     }
+  ],
+  "files_to_delete": [
+    "đường dẫn tuyệt đối của file hoặc thư mục cần xóa"
   ]
 }
 ```
 
 Quy tắc bắt buộc:
-- `files_to_write` phải là mảng, có thể chứa nhiều file cùng lúc
-- `content` phải là code hoàn chỉnh, KHÔNG dùng comment placeholder như `// ... existing code`
+- `files_to_write`: mảng các file cần tạo mới hoặc cập nhật nội dung
+- `files_to_delete`: mảng path cần xóa — dùng khi đổi tên file (xóa path cũ), xóa file thừa, hoặc xóa thư mục cũ sau khi đổi tên
+- Khi ĐỔI TÊN file: thêm path mới vào `files_to_write` VÀ path cũ vào `files_to_delete`
+- Khi ĐỔI TÊN thư mục: thêm tất cả file trong thư mục mới vào `files_to_write`, thêm đường dẫn thư mục cũ vào `files_to_delete`
+- `content` phải là code hoàn chỉnh, KHÔNG dùng `// ... existing code`
 - `path` phải là đường dẫn tuyệt đối dựa trên project_path được cung cấp
-- Nếu câu hỏi chỉ là hỏi/phân tích, KHÔNG cần ghi file → trả về JSON với `"files_to_write": []`
-- Luôn trả về JSON hợp lệ, không có text ngoài JSON block
+- Nếu chỉ hỏi/phân tích: trả về JSON với cả hai mảng rỗng
+- Luôn trả về JSON hợp lệ, không có text ngoài JSON
 """
 
 
@@ -66,10 +70,6 @@ class AIAgent:
         history: list,
         project_path: Optional[str] = None
     ) -> dict:
-        """
-        Chat với khả năng tự ghi file.
-        Trả về: { reply: str, files_to_write: [{ path, content, action }] }
-        """
         system = SYSTEM_WITH_WRITE
 
         if file_contexts:
@@ -113,7 +113,7 @@ class AIAgent:
 ---
 **Yêu cầu:** {focus_hint}
 
-Hãy đưa ra phân tích chi tiết, có cấu trúc rõ ràng với các mục:
+Hãy đưa ra phân tích chi tiết với các mục:
 1. Tổng quan kiến trúc
 2. Điểm mạnh
 3. Vấn đề phát hiện (với file + dòng cụ thể nếu có)
@@ -150,17 +150,14 @@ Hãy đưa ra phân tích chi tiết, có cấu trúc rõ ràng với các mục
             return json.dumps({"reply": f"❌ Lỗi: {str(e)}", "files_to_write": []})
 
     def _parse_response(self, raw: str) -> dict:
-        """Parse JSON response từ model, fallback về plain text nếu không parse được"""
-        # Thử extract JSON từ markdown fences nếu có
         fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
         text = fence.group(1) if fence else raw.strip()
-
         try:
             data = json.loads(text)
             return {
                 "reply": data.get("reply", ""),
-                "files_to_write": data.get("files_to_write", [])
+                "files_to_write": data.get("files_to_write", []),
+                "files_to_delete": data.get("files_to_delete", []),
             }
         except json.JSONDecodeError:
-            # Model không trả về JSON đúng format — coi là plain text chat
-            return {"reply": raw, "files_to_write": []}
+            return {"reply": raw, "files_to_write": [], "files_to_delete": []}

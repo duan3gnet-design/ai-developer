@@ -14,16 +14,8 @@ const QUICK_PROMPTS = [
 
 const mdComponents = {
   code({ inline, children }) {
-    if (inline) return (
-      <code style={{ background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 3, fontSize: 12, fontFamily: 'var(--font-code)' }}>
-        {children}
-      </code>
-    )
-    return (
-      <pre style={{ background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', fontSize: 12, fontFamily: 'var(--font-code)', overflowX: 'auto', marginTop: 8 }}>
-        <code>{children}</code>
-      </pre>
-    )
+    if (inline) return <code style={{ background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 3, fontSize: 12, fontFamily: 'var(--font-code)' }}>{children}</code>
+    return <pre style={{ background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', fontSize: 12, fontFamily: 'var(--font-code)', overflowX: 'auto', marginTop: 8 }}><code>{children}</code></pre>
   },
   p({ children }) { return <p style={{ marginBottom: 8 }}>{children}</p> },
   ul({ children }) { return <ul style={{ paddingLeft: 20, marginBottom: 8 }}>{children}</ul> },
@@ -46,68 +38,84 @@ function Chip({ file, onRemove }) {
 
 function CopyButton({ content }) {
   const [copied, setCopied] = useState(false)
-  const handle = () => {
-    navigator.clipboard.writeText(content)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
+  const handle = () => { navigator.clipboard.writeText(content); setCopied(true); setTimeout(() => setCopied(false), 1500) }
   return (
     <button onClick={handle}
       style={{ fontSize: 11, padding: '2px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-3)', cursor: 'pointer', background: 'transparent' }}
       onMouseEnter={e => e.currentTarget.style.color = 'var(--text-1)'}
       onMouseLeave={e => e.currentTarget.style.color = 'var(--text-3)'}
-    >
-      {copied ? '✓ Đã copy' : '⎘ Copy'}
-    </button>
+    >{copied ? '✓ Đã copy' : '⎘ Copy'}</button>
   )
 }
 
-// Badge hiển thị các file đã được ghi
-function FilesWrittenBadge({ files }) {
-  const [expanded, setExpanded] = useState(false)
-  if (!files || files.length === 0) return null
+function shortPath(p) {
+  return (p || '').replace(/\\/g, '/').split('/').slice(-3).join('/')
+}
 
-  const ok = files.filter(f => f.success)
-  const fail = files.filter(f => !f.success)
+// Badge tổng hợp: files ghi + files xóa
+function FileOpsBadge({ filesWritten, filesDeleted }) {
+  const [expanded, setExpanded] = useState(false)
+
+  const written = filesWritten || []
+  const deleted = filesDeleted || []
+  if (written.length === 0 && deleted.length === 0) return null
+
+  const writtenOk   = written.filter(f => f.success)
+  const writtenFail = written.filter(f => !f.success)
+  const deletedOk   = deleted.filter(f => f.success)
+  const deletedFail = deleted.filter(f => !f.success)
+  const anyFail     = writtenFail.length + deletedFail.length > 0
+
+  // Summary label
+  const parts = []
+  if (writtenOk.length)   parts.push(<span key="w" style={{ color: 'var(--green)' }}>✓ {writtenOk.length} file ghi</span>)
+  if (deletedOk.length)   parts.push(<span key="d" style={{ color: 'var(--amber)' }}>🗑 {deletedOk.length} file xóa</span>)
+  if (writtenFail.length) parts.push(<span key="wf" style={{ color: 'var(--red)' }}>{writtenFail.length} ghi thất bại</span>)
+  if (deletedFail.length) parts.push(<span key="df" style={{ color: 'var(--red)' }}>{deletedFail.length} xóa thất bại</span>)
+
+  const BADGE = {
+    create: { label: 'NEW',    bg: 'var(--green-dim)',              color: 'var(--green)' },
+    update: { label: 'UPDATE', bg: 'rgba(96,165,250,0.15)',         color: 'var(--blue)'  },
+    delete: { label: 'DELETE', bg: 'rgba(251,191,36,0.15)',         color: 'var(--amber)' },
+    unknown:{ label: '?',      bg: 'var(--bg-3)',                   color: 'var(--text-3)'},
+  }
+
+  const Row = ({ icon, badge, path, error, success }) => (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 10px', borderTop: '1px solid var(--border)' }}>
+      <span style={{ flexShrink: 0, marginTop: 1, color: success ? (badge === 'DELETE' ? 'var(--amber)' : 'var(--green)') : 'var(--red)' }}>{icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: BADGE[badge?.toLowerCase()]?.bg, color: BADGE[badge?.toLowerCase()]?.color, flexShrink: 0 }}>
+            {BADGE[badge?.toLowerCase()]?.label || badge}
+          </span>
+          <span style={{ fontFamily: 'var(--font-code)', fontSize: 11, color: success ? 'var(--text-1)' : 'var(--red)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {shortPath(path)}
+          </span>
+        </div>
+        {error && <div style={{ color: 'var(--red)', fontSize: 11, marginTop: 2 }}>{error}</div>}
+      </div>
+    </div>
+  )
 
   return (
-    <div style={{ marginTop: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', overflow: 'hidden', fontSize: 12 }}>
-      {/* Header — click để expand */}
-      <div
-        onClick={() => setExpanded(e => !e)}
-        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'var(--bg-3)', cursor: 'pointer', userSelect: 'none' }}
+    <div style={{ marginTop: 10, borderRadius: 'var(--radius-md)', border: `1px solid ${anyFail ? 'rgba(248,113,113,0.3)' : 'var(--border)'}`, overflow: 'hidden', fontSize: 12 }}>
+      <div onClick={() => setExpanded(e => !e)}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', background: 'var(--bg-3)', cursor: 'pointer', userSelect: 'none' }}
       >
-        <span style={{ fontSize: 13 }}>
-          {fail.length === 0 ? '✅' : ok.length === 0 ? '❌' : '⚠️'}
-        </span>
-        <span style={{ color: 'var(--text-2)', flex: 1 }}>
-          {ok.length > 0 && <span style={{ color: 'var(--green)' }}>Đã ghi {ok.length} file</span>}
-          {ok.length > 0 && fail.length > 0 && ' · '}
-          {fail.length > 0 && <span style={{ color: 'var(--red)' }}>{fail.length} thất bại</span>}
+        <span>{anyFail ? '⚠️' : '✅'}</span>
+        <span style={{ flex: 1, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {parts.map((p, i) => <React.Fragment key={i}>{i > 0 && <span style={{ color: 'var(--text-3)' }}>·</span>}{p}</React.Fragment>)}
         </span>
         <span style={{ color: 'var(--text-3)', fontSize: 10 }}>{expanded ? '▲' : '▼'}</span>
       </div>
 
-      {/* File list */}
       {expanded && (
         <div style={{ background: 'var(--bg-1)' }}>
-          {files.map((f, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 10px', borderTop: '1px solid var(--border)' }}>
-              <span style={{ fontSize: 12, flexShrink: 0, marginTop: 1 }}>
-                {f.success ? '✓' : '✗'}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: f.action === 'create' ? 'var(--green-dim)' : 'rgba(96,165,250,0.15)', color: f.action === 'create' ? 'var(--green)' : 'var(--blue)' }}>
-                    {f.action === 'create' ? 'NEW' : 'UPDATE'}
-                  </span>
-                  <span style={{ fontFamily: 'var(--font-code)', fontSize: 11, color: f.success ? 'var(--text-1)' : 'var(--red)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {f.path.replace(/\\/g, '/').split('/').slice(-3).join('/')}
-                  </span>
-                </div>
-                {f.error && <div style={{ color: 'var(--red)', fontSize: 11, marginTop: 2 }}>{f.error}</div>}
-              </div>
-            </div>
+          {written.map((f, i) => (
+            <Row key={'w' + i} icon={f.success ? '✓' : '✗'} badge={f.action} path={f.path} error={f.error} success={f.success} />
+          ))}
+          {deleted.map((f, i) => (
+            <Row key={'d' + i} icon={f.success ? '🗑' : '✗'} badge="delete" path={f.path} error={f.error} success={f.success} />
           ))}
         </div>
       )}
@@ -121,10 +129,8 @@ function Message({ msg, isLast, onRetry }) {
   const [hovered, setHovered] = useState(false)
 
   return (
-    <div
-      style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start', marginBottom: 12 }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start', marginBottom: 12 }}
+      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, maxWidth: '82%', flexDirection: isUser ? 'row-reverse' : 'row' }}>
         {!isUser && (
@@ -133,43 +139,26 @@ function Message({ msg, isLast, onRetry }) {
           </div>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            padding: '10px 14px',
-            borderRadius: isUser ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
-            background: isUser ? 'var(--accent-dim)' : isError ? 'rgba(248,113,113,0.07)' : 'var(--bg-2)',
-            border: `1px solid ${isUser ? 'var(--accent-dim)' : isError ? 'rgba(248,113,113,0.3)' : 'var(--border)'}`,
-            color: 'var(--text-1)', fontSize: 13, lineHeight: 1.7,
-          }}>
+          <div style={{ padding: '10px 14px', borderRadius: isUser ? '12px 12px 4px 12px' : '12px 12px 12px 4px', background: isUser ? 'var(--accent-dim)' : isError ? 'rgba(248,113,113,0.07)' : 'var(--bg-2)', border: `1px solid ${isUser ? 'var(--accent-dim)' : isError ? 'rgba(248,113,113,0.3)' : 'var(--border)'}`, color: 'var(--text-1)', fontSize: 13, lineHeight: 1.7 }}>
             {isUser
               ? <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
               : <ReactMarkdown components={mdComponents}>{msg.content}</ReactMarkdown>
             }
           </div>
-
-          {/* Files written badge — chỉ hiện với AI message */}
-          {!isUser && msg.filesWritten && (
-            <FilesWrittenBadge files={msg.filesWritten} />
+          {!isUser && (msg.filesWritten?.length > 0 || msg.filesDeleted?.length > 0) && (
+            <FileOpsBadge filesWritten={msg.filesWritten} filesDeleted={msg.filesDeleted} />
           )}
         </div>
       </div>
 
-      {/* Action bar */}
-      <div style={{
-        display: 'flex', gap: 4, marginTop: 4,
-        paddingLeft: isUser ? 0 : 36,
-        opacity: hovered || isLast ? 1 : 0,
-        transition: 'opacity 0.15s',
-        justifyContent: isUser ? 'flex-end' : 'flex-start',
-      }}>
+      <div style={{ display: 'flex', gap: 4, marginTop: 4, paddingLeft: isUser ? 0 : 36, opacity: hovered || isLast ? 1 : 0, transition: 'opacity 0.15s', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
         {!isUser && <CopyButton content={msg.content} />}
         {((isUser && isLast) || (isError && isLast)) && (
           <button onClick={() => onRetry(msg)}
-            style={{ fontSize: 11, padding: '2px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-3)', cursor: 'pointer', background: 'transparent', display: 'flex', alignItems: 'center', gap: 4 }}
+            style={{ fontSize: 11, padding: '2px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-3)', cursor: 'pointer', background: 'transparent' }}
             onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent)'; e.currentTarget.style.borderColor = 'var(--accent)' }}
             onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)'; e.currentTarget.style.borderColor = 'var(--border)' }}
-          >
-            ↺ Thử lại
-          </button>
+          >↺ Thử lại</button>
         )}
       </div>
     </div>
@@ -181,61 +170,39 @@ function ThinkingIndicator({ onCancel }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
       <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent-dim)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>AI</div>
       <div style={{ display: 'flex', gap: 4 }}>
-        {[0, 150, 300].map(d => (
-          <div key={d} style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1.2s ease infinite', animationDelay: `${d}ms` }} />
-        ))}
+        {[0, 150, 300].map(d => <div key={d} style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1.2s ease infinite', animationDelay: `${d}ms` }} />)}
       </div>
       <button onClick={onCancel}
         style={{ marginLeft: 8, fontSize: 11, padding: '2px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-3)', cursor: 'pointer', background: 'transparent' }}
         onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)' }}
         onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-3)'; e.currentTarget.style.borderColor = 'var(--border)' }}
-      >
-        ✕ Hủy
-      </button>
+      >✕ Hủy</button>
       <style>{`@keyframes pulse { 0%,80%,100%{opacity:0.2} 40%{opacity:1} }`}</style>
     </div>
   )
 }
 
 export default function ChatPanel() {
-  const {
-    messages, addMessage, setThinking, isThinking,
-    fileContexts, removeFileContext, projectPath,
-    setFileTree,
-  } = useAppStore()
-
+  const { messages, addMessage, setThinking, isThinking, fileContexts, removeFileContext, projectPath, setFileTree } = useAppStore()
   const [input, setInput] = useState('')
   const [backendOk, setBackendOk] = useState(null)
   const bottomRef = useRef(null)
   const textareaRef = useRef(null)
   const abortRef = useRef(null)
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isThinking])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, isThinking])
+  useEffect(() => { agentApi.health().then(() => setBackendOk(true)).catch(() => setBackendOk(false)) }, [])
 
-  useEffect(() => {
-    agentApi.health()
-      .then(() => setBackendOk(true))
-      .catch(() => setBackendOk(false))
-  }, [])
-
-  // Reload file tree sau khi AI ghi file
   const reloadFileTree = useCallback(async () => {
     const { projectPath: proj } = useAppStore.getState()
     if (!proj || !window.electronAPI) return
     try {
       const entries = await window.electronAPI.readDir(proj)
       if (!entries.error) {
-        const buildNode = async (entry) => {
-          if (entry.type === 'dir') {
-            const children = await window.electronAPI.readDir(entry.path)
-            return { ...entry, children: Array.isArray(children) ? children : [] }
-          }
-          return entry
-        }
-        const nodes = await Promise.all(entries.map(buildNode))
-        setFileTree(nodes)
+        const buildNode = async (e) => e.type === 'dir'
+          ? { ...e, children: Array.isArray(await window.electronAPI.readDir(e.path)) ? (await window.electronAPI.readDir(e.path)) : [] }
+          : e
+        setFileTree(await Promise.all(entries.map(buildNode)))
       }
     } catch { /* silent */ }
   }, [setFileTree])
@@ -243,18 +210,16 @@ export default function ChatPanel() {
   const callAgent = useCallback(async (userMsg) => {
     if (abortRef.current) abortRef.current.abort()
     abortRef.current = new AbortController()
-
     setThinking(true)
     try {
       const { messages: currentMsgs, fileContexts: ctx, projectPath: proj } = useAppStore.getState()
       const history = currentMsgs.slice(-22, -1).map(m => ({ role: m.role, content: m.content }))
       const res = await agentApi.chat(userMsg, ctx, history, proj)
+      const { reply, files_written, files_deleted } = res.data
 
-      const { reply, files_written } = res.data
-      addMessage({ role: 'assistant', content: reply, filesWritten: files_written || [] })
+      addMessage({ role: 'assistant', content: reply, filesWritten: files_written || [], filesDeleted: files_deleted || [] })
 
-      // Nếu có file được ghi → reload file tree
-      if (files_written?.some(f => f.success)) {
+      if (files_written?.some(f => f.success) || files_deleted?.some(f => f.success)) {
         await reloadFileTree()
       }
     } catch (err) {
@@ -264,7 +229,7 @@ export default function ChatPanel() {
         content: backendOk === false
           ? '❌ Python backend chưa khởi động. Chạy: `cd python && pip install -r requirements.txt && python server.py`'
           : `❌ Lỗi: ${err.message}`,
-        filesWritten: []
+        filesWritten: [], filesDeleted: []
       })
     } finally {
       setThinking(false)
@@ -283,7 +248,6 @@ export default function ChatPanel() {
     if (isThinking) return
     const { messages: currentMsgs } = useAppStore.getState()
     let userContent = ''
-
     if (msg.role === 'user') {
       userContent = msg.content
       const idx = currentMsgs.findIndex(m => m.timestamp === msg.timestamp)
@@ -294,19 +258,12 @@ export default function ChatPanel() {
       userContent = lastUser.content
       useAppStore.setState({ messages: currentMsgs.slice(0, -1) })
     }
-
     addMessage({ role: 'user', content: userContent })
     await callAgent(userContent)
   }, [isThinking, addMessage, callAgent])
 
-  const handleCancel = useCallback(() => {
-    if (abortRef.current) abortRef.current.abort()
-    setThinking(false)
-  }, [setThinking])
-
-  const handleKey = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
-  }
+  const handleCancel = useCallback(() => { if (abortRef.current) abortRef.current.abort(); setThinking(false) }, [setThinking])
+  const handleKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }
 
   const s = {
     root: { display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-0)' },
@@ -329,14 +286,10 @@ export default function ChatPanel() {
           <div style={s.empty}>
             <div style={{ fontSize: 32, marginBottom: 12 }}>🤖</div>
             <div style={{ color: 'var(--text-2)', fontSize: 14 }}>AI Developer Agent sẵn sàng</div>
-            <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 6 }}>
-              Thử: "Tạo file UserService.java" hoặc "Implement Circuit Breaker cho api-gateway"
-            </div>
+            <div style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 6 }}>Thử: "Đổi tên UserService thành AccountService" hoặc "Tạo CircuitBreakerConfig.java"</div>
           </div>
         )}
-        {messages.map((m, i) => (
-          <Message key={i} msg={m} isLast={i === messages.length - 1} onRetry={handleRetry} />
-        ))}
+        {messages.map((m, i) => <Message key={i} msg={m} isLast={i === messages.length - 1} onRetry={handleRetry} />)}
         {isThinking && <ThinkingIndicator onCancel={handleCancel} />}
         <div ref={bottomRef} />
       </div>
@@ -346,9 +299,7 @@ export default function ChatPanel() {
           <button key={q.label} style={s.quickBtn} onClick={() => send(q.prompt)}
             onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
             onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
-          >
-            {q.label}
-          </button>
+          >{q.label}</button>
         ))}
       </div>
 
@@ -359,23 +310,14 @@ export default function ChatPanel() {
           </div>
         )}
         <div style={s.inputRow}>
-          <textarea
-            ref={textareaRef}
-            style={s.textarea}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="Ví dụ: 'Tạo CircuitBreakerConfig.java cho api-gateway' hoặc 'Thêm endpoint GET /users vào UserController'"
-            disabled={isThinking}
+          <textarea ref={textareaRef} style={s.textarea} value={input} onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKey} disabled={isThinking}
+            placeholder="Ví dụ: 'Đổi tên UserController thành AccountController' hoặc 'Xóa file config cũ'"
           />
-          <button style={s.sendBtn} onClick={() => send()} disabled={isThinking}>
-            {isThinking ? '...' : '↑ Gửi'}
-          </button>
+          <button style={s.sendBtn} onClick={() => send()} disabled={isThinking}>{isThinking ? '...' : '↑ Gửi'}</button>
         </div>
         {backendOk !== null && (
-          <div style={s.status}>
-            {backendOk ? '● Python backend connected' : '● Python backend offline — chạy server.py để kích hoạt'}
-          </div>
+          <div style={s.status}>{backendOk ? '● Python backend connected' : '● Python backend offline — chạy server.py để kích hoạt'}</div>
         )}
       </div>
     </div>
