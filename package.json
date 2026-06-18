@@ -1,0 +1,51 @@
+{
+  "name": "ai-developer",
+  "version": "1.0.0",
+  "description": "AI Developer Agent — desktop app hỗ trợ lập trình",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"electron .\"",
+    "build": "vite build && electron-builder",
+    "vite": "vite",
+    "electron": "electron .",
+    "python": "cd python && python server.py"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "axios": "^1.7.2",
+    "dompurify": "^3.4.10",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "react-syntax-highlighter": "^16.1.1",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^8.2.2",
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.0.16"
+  },
+  "build": {
+    "appId": "com.aidev.developer",
+    "productName": "AI Developer",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "python/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
