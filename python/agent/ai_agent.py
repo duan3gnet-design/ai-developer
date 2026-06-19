@@ -7,8 +7,10 @@ import re
 import json
 from typing import Optional
 from groq import Groq
+from agent.code_reader import CodeReader
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY", ""))
+code_reader = CodeReader()
 
 MODEL = "qwen/qwen3-32b"
 MAX_TOKENS = 6000
@@ -34,29 +36,25 @@ SYSTEM_WITH_WRITE = SYSTEM_BASE + """
 
 Khi user yêu cầu tạo, sửa, đổi tên, di chuyển, hay xóa file/thư mục — bạn PHẢI trả về JSON theo đúng format sau:
 
-```json
 {
   "reply": "Giải thích bằng tiếng Việt những gì bạn đã làm và tại sao",
   "files_to_write": [
     {
-      "path": "đường dẫn tuyệt đối của file cần tạo hoặc ghi",
+      "path": "đường dẫn tuyệt đối CHÍNH XÁC lấy từ PROJECT FILE TREE bên dưới",
       "content": "toàn bộ nội dung file, không được dùng placeholder"
     }
   ],
   "files_to_delete": [
-    "đường dẫn tuyệt đối của file hoặc thư mục cần xóa"
+    "đường dẫn tuyệt đối CHÍNH XÁC lấy từ PROJECT FILE TREE bên dưới"
   ]
 }
-```
 
 Quy tắc bắt buộc:
-- `files_to_write`: mảng các file cần tạo mới hoặc cập nhật nội dung
-- `files_to_delete`: mảng path cần xóa — dùng khi đổi tên file (xóa path cũ), xóa file thừa, hoặc xóa thư mục cũ sau khi đổi tên
-- Khi ĐỔI TÊN file: thêm path mới vào `files_to_write` VÀ path cũ vào `files_to_delete`
-- Khi ĐỔI TÊN thư mục: thêm tất cả file trong thư mục mới vào `files_to_write`, thêm đường dẫn thư mục cũ vào `files_to_delete`
-- `content` phải là code hoàn chỉnh, KHÔNG dùng `// ... existing code`
-- `path` phải là đường dẫn tuyệt đối dựa trên project_path được cung cấp
-- Nếu chỉ hỏi/phân tích: trả về JSON với cả hai mảng rỗng
+- `path` trong files_to_write và files_to_delete PHẢI là đường dẫn tuyệt đối, lấy CHÍNH XÁC từ PROJECT FILE TREE được cung cấp — không được tự đoán hay viết tắt
+- Khi ĐỔI TÊN file: thêm path mới vào files_to_write, thêm path CŨ (từ file tree) vào files_to_delete
+- Khi ĐỔI TÊN thư mục: ghi tất cả file mới vào files_to_write, thêm đường dẫn thư mục CŨ vào files_to_delete
+- content phải là code hoàn chỉnh, KHÔNG dùng "// ... existing code"
+- Nếu chỉ hỏi/phân tích: trả về JSON với cả hai mảng rỗng []
 - Luôn trả về JSON hợp lệ, không có text ngoài JSON
 """
 
@@ -72,14 +70,18 @@ class AIAgent:
     ) -> dict:
         system = SYSTEM_WITH_WRITE
 
+        # ── Inject project file tree với path tuyệt đối ──────────────────────
+        if project_path:
+            tree_text = code_reader.get_tree_text(project_path)
+            system += f"\n\n## PROJECT FILE TREE (dùng path này khi ghi/xóa file)\n```\n{tree_text}\n```"
+            system += f"\n\n**Project root:** `{project_path}`"
+
+        # ── Inject nội dung file đang mở ─────────────────────────────────────
         if file_contexts:
             system += "\n\n## Files đang được mở:\n"
             for f in file_contexts:
                 lang = f.get("language", "")
                 system += f"\n### {f['name']} (`{f['path']}`)\n```{lang}\n{f['content'][:3000]}\n```\n"
-
-        if project_path:
-            system += f"\n\n**Project đang làm việc:** `{project_path}`\nDùng đường dẫn này làm gốc khi tạo file mới."
 
         messages = self._build_messages(history, message)
         raw = self._call(system, messages)
@@ -104,7 +106,7 @@ class AIAgent:
 **Languages:** {json.dumps(summary.get('languages', {}), ensure_ascii=False)}
 **Tổng files:** {summary.get('total_files')}
 
-## Cấu trúc thư mục:
+## Cấu trúc thư mục (path tuyệt đối):
 {tree_text}
 
 ## Nội dung files (rút gọn):
@@ -116,7 +118,7 @@ class AIAgent:
 Hãy đưa ra phân tích chi tiết với các mục:
 1. Tổng quan kiến trúc
 2. Điểm mạnh
-3. Vấn đề phát hiện (với file + dòng cụ thể nếu có)
+3. Vấn đề phát hiện (với path + dòng cụ thể nếu có)
 4. Đề xuất cải tiến (ưu tiên theo impact)
 5. Bước tiếp theo nên làm"""
 

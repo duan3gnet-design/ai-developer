@@ -28,14 +28,11 @@ MAX_FILE_SIZE = 500_000  # 500KB
 class CodeReader:
 
     def read_project(self, root_path: str, max_files: int = 50) -> dict:
-        """Đọc toàn bộ project: tree + nội dung files"""
         root = Path(root_path)
         if not root.exists():
             return {"error": f"Path không tồn tại: {root_path}"}
-
         tree = self._build_tree(root)
         files = self._collect_files(root, max_files)
-
         return {
             "root": str(root),
             "name": root.name,
@@ -46,12 +43,9 @@ class CodeReader:
         }
 
     def summarize_project(self, root_path: str) -> dict:
-        """Tạo summary ngắn gọn để feed cho AI (tránh vượt context)"""
         data = self.read_project(root_path, max_files=30)
         if "error" in data:
             return data
-
-        # Rút gọn content của mỗi file xuống 200 dòng đầu
         summarized_files = []
         for f in data["files"]:
             content = f.get("content", "")
@@ -60,22 +54,30 @@ class CodeReader:
             summarized_files.append({
                 "path": f["path"],
                 "name": f["name"],
+                "relative_path": f["relative_path"],
                 "language": f["language"],
                 "lines": len(lines),
                 "content": "\n".join(lines[:200]) + ("\n... (truncated)" if truncated else "")
             })
-
         return {
             "root": data["root"],
             "name": data["name"],
             "total_files": data["total_files"],
             "languages": data["languages"],
             "files": summarized_files,
+            # tree_text giờ in path tuyệt đối để AI biết chính xác cần xóa/sửa file nào
             "tree_text": self._tree_to_text(data["tree"])
         }
 
+    def get_tree_text(self, root_path: str) -> str:
+        """Chỉ lấy cây thư mục dạng text (dùng để inject vào system prompt)."""
+        root = Path(root_path)
+        if not root.exists():
+            return f"(Không tìm thấy: {root_path})"
+        tree = self._build_tree(root)
+        return self._tree_to_text(tree)
+
     def read_file(self, file_path: str) -> dict:
-        """Đọc một file cụ thể"""
         path = Path(file_path)
         if not path.exists():
             return {"error": "File không tồn tại"}
@@ -93,7 +95,7 @@ class CodeReader:
 
     # ─── Private helpers ──────────────────────────────────────────────────────
 
-    def _build_tree(self, root: Path, depth: int = 0, max_depth: int = 5) -> list:
+    def _build_tree(self, root: Path, depth: int = 0, max_depth: int = 6) -> list:
         if depth > max_depth:
             return []
         items = []
@@ -125,7 +127,6 @@ class CodeReader:
             if len(files) >= max_files:
                 break
             if path.is_file() and path.suffix in TEXT_EXTENSIONS:
-                # Bỏ qua ignored dirs
                 if any(part in IGNORE_DIRS for part in path.parts):
                     continue
                 if path.stat().st_size > MAX_FILE_SIZE:
@@ -163,12 +164,15 @@ class CodeReader:
         return dict(sorted(langs.items(), key=lambda x: -x[1]))
 
     def _tree_to_text(self, tree: list, indent: int = 0) -> str:
+        """In cây thư mục với PATH TUYỆT ĐỐI để AI biết chính xác đường dẫn."""
         lines = []
         for item in tree:
-            prefix = "  " * indent
+            pad = "  " * indent
             if item["type"] == "dir":
-                lines.append(f"{prefix}📁 {item['name']}/")
-                lines.append(self._tree_to_text(item.get("children", []), indent + 1))
+                lines.append(f"{pad}[DIR]  {item['path']}")
+                child_text = self._tree_to_text(item.get("children", []), indent + 1)
+                if child_text:
+                    lines.append(child_text)
             else:
-                lines.append(f"{prefix}📄 {item['name']}")
+                lines.append(f"{pad}[FILE] {item['path']}")
         return "\n".join(lines)
