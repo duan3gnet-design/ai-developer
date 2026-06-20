@@ -160,13 +160,14 @@ async def chat(req: ChatRequest):
             project_path=req.project_path
         )
 
+        project_path = req.project_path
         reply           = result.get("reply", "")
         files_to_write  = result.get("files_to_write", [])
         files_to_delete = result.get("files_to_delete", [])
 
         # 1️⃣ Xóa trước
         files_deleted = [
-            delete_path(p, req.project_path)
+            delete_path(p, project_path)
             for p in files_to_delete if p
         ]
 
@@ -175,6 +176,8 @@ async def chat(req: ChatRequest):
         for f in files_to_write:
             file_path = f.get("path", "").strip()
             content   = f.get("content", "")
+            if file_path and not file_path.startswith(project_path): 
+                file_path = project_path + "\\" + file_path
             if not file_path or content is None:
                 files_written.append({
                     "path": file_path, "action": "unknown",
