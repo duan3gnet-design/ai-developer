@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useAppStore } from '../store/appStore'
 import { agentApi } from '../hooks/useAgent'
 import ReactMarkdown from 'react-markdown'
+import { readTreeRecursive } from '../helpers/helpers';
 
 const QUICK_PROMPTS = [
   { label: '🔍 Phân tích cấu trúc', prompt: 'Phân tích cấu trúc và kiến trúc của dự án này' },
@@ -225,15 +226,8 @@ export default function ChatPanel() {
     const { projectPath: proj } = useAppStore.getState()
     if (!proj || !window.electronAPI) return
     try {
-      const entries = await window.electronAPI.readDir(proj)
-      if (!entries?.error) {
-        const nodes = await Promise.all((entries||[]).map(async e =>
-          e.type === 'dir'
-            ? { ...e, children: (await window.electronAPI.readDir(e.path)) || [] }
-            : e
-        ))
-        setFileTree(nodes)
-      }
+      const tree = await readTreeRecursive(proj, 0, 6)
+      setFileTree(tree)
     } catch {}
   }, [setFileTree])
 

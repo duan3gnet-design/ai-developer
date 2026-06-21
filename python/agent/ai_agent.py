@@ -19,7 +19,7 @@ CONTEXT_WINDOW    = 32_000
 COMPLETION_TARGET = 4_000
 COMPLETION_MIN    = 512
 COMPLETION_MAX    = 6_000
-MAX_STEPS         = 10     # giới hạn số bước tối đa trong 1 task
+MAX_STEPS         = 10
 
 TREE_BUDGET      = 1_500
 CONTEXT_BUDGET   = 2_500
@@ -30,63 +30,113 @@ SYSTEM_BASE = """Bạn là AI Developer Agent — senior engineer chuyên Java/S
 Trả lời bằng tiếng Việt. Code phải đầy đủ, không placeholder. Giải thích WHY.
 /no_think"""
 
-# ── Prompt cho bước PLAN ─────────────────────────────────────────────────────
-PLAN_SYSTEM = SYSTEM_BASE + """
 
-Nhiệm vụ: Lập kế hoạch chi tiết để thực hiện yêu cầu của user.
+def _plan_system(root: str) -> str:
+    sep = os.sep
+    example = root + sep + "src" + sep + "main" + sep + "java" + sep + "NewService.java"
+    return SYSTEM_BASE + f"""
+
+PROJECT_ROOT: {root}
+
+Nhiệm vụ: Lập kế hoạch thực hiện yêu cầu của user.
 
 Trả về JSON:
-{
+{{
   "is_complex": true/false,
-  "summary": "Mô tả ngắn gọn task sẽ làm",
+  "summary": "Mô tả ngắn task",
   "steps": [
-    {
+    {{
       "id": 1,
-      "title": "Tên bước ngắn gọn",
-      "description": "Mô tả chi tiết bước này làm gì",
-      "files": ["path tuyệt đối của file sẽ tạo/sửa trong bước này"]
-    }
+      "title": "Tên bước",
+      "description": "Chi tiết",
+      "files": ["{example}"]
+    }}
   ]
-}
+}}
 
-Quy tắc:
-- is_complex=false nếu chỉ cần 1 file hoặc câu hỏi/phân tích → steps=[]
-- is_complex=true nếu cần tạo/sửa nhiều file, nhiều module
-- Mỗi step chỉ xử lý 1-3 file liên quan chặt chẽ (không nhồi quá nhiều)
-- path trong steps.files lấy từ FILE TREE nếu là file cũ, hoặc path mới hoàn chỉnh nếu tạo mới
-- Tối đa 10 steps"""
+QUY TẮC PATH (BẮT BUỘC):
+- Mọi path PHẢI bắt đầu bằng PROJECT_ROOT="{root}"
+- File cũ: copy y chang từ FILE TREE bên dưới
+- File mới: "{root}{sep}sub{sep}dir{sep}FileName.java" (ghép PROJECT_ROOT + đường dẫn con)
+- TUYỆT ĐỐI không dùng relative path, không slash ở đầu, không drive letter khác
+- is_complex=false nếu chỉ hỏi/phân tích hoặc 1 file → steps=[]
+- Mỗi step 1-3 file, tối đa 10 steps"""
 
-# ── Prompt cho bước EXECUTE ───────────────────────────────────────────────────
-EXECUTE_SYSTEM = SYSTEM_BASE + """
 
-Nhiệm vụ: Thực hiện đúng 1 bước trong kế hoạch đã lập.
+def _execute_system(root: str) -> str:
+    sep = os.sep
+    example_w = root + sep + "src" + sep + "NewFile.java"
+    example_d = root + sep + "src" + sep + "OldFile.java"
+    return SYSTEM_BASE + f"""
+
+PROJECT_ROOT: {root}
+
+Nhiệm vụ: Thực hiện đúng 1 bước trong kế hoạch.
 
 Trả về JSON:
-{
-  "step_summary": "Tóm tắt những gì đã làm trong bước này",
-  "files_to_write": [{"path": "PATH_TUYỆT_ĐỐI", "content": "toàn bộ nội dung"}],
-  "files_to_delete": ["PATH_TUYỆT_ĐỐI"]
-}
+{{
+  "step_summary": "Tóm tắt bước này",
+  "files_to_write": [{{"path": "{example_w}", "content": "toàn bộ nội dung"}}],
+  "files_to_delete": ["{example_d}"]
+}}
 
-Quy tắc QUAN TRỌNG:
-- Chỉ thực hiện đúng files được liệt kê trong bước này, không làm lố sang bước khác
-- content phải là code HOÀN CHỈNH, không dùng // ... existing code
-- path lấy chính xác từ FILE TREE, không tự viết lại
-- JSON hợp lệ, không có text ngoài JSON"""
+QUY TẮC PATH (BẮT BUỘC):
+- Mọi path PHẢI bắt đầu bằng PROJECT_ROOT="{root}"
+- File cũ cần xóa: copy y chang từ FILE TREE
+- File mới: ghép "{root}{sep}" + đường dẫn con
+- TUYỆT ĐỐI không relative path, không path ngoài PROJECT_ROOT
+- content HOÀN CHỈNH, không dùng // ... existing code
+- JSON hợp lệ, không text ngoài JSON"""
 
-# ── Prompt cho single-step (is_complex=false) ─────────────────────────────────
-SINGLE_SYSTEM = SYSTEM_BASE + """
 
-Khi tạo/sửa/xóa/đổi tên file → trả về JSON:
-{"reply":"...","files_to_write":[{"path":"PATH_TUYỆT_ĐỐI","content":"..."}],"files_to_delete":["PATH_TUYỆT_ĐỐI"]}
+def _single_system(root: str) -> str:
+    sep = os.sep
+    example = root + sep + "src" + sep + "File.java"
+    return SYSTEM_BASE + f"""
 
-Quy tắc:
-- path copy y chang từ FILE TREE
-- content đầy đủ, không placeholder
-- Chỉ hỏi/phân tích: files_to_write=[], files_to_delete=[]"""
+PROJECT_ROOT: {root}
+
+Khi tạo/sửa/xóa file → trả về JSON:
+{{"reply":"...","files_to_write":[{{"path":"{example}","content":"..."}}],"files_to_delete":["{example}"]}}
+
+QUY TẮC PATH (BẮT BUỘC):
+- Mọi path PHẢI bắt đầu bằng PROJECT_ROOT="{root}"
+- File cũ: copy từ FILE TREE. File mới: "{root}{sep}" + đường dẫn con
+- content đầy đủ. Chỉ hỏi/phân tích: files_to_write=[], files_to_delete=[]"""
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _fix_paths(items, project_root: str) -> list:
+    """
+    Hậu xử lý path AI trả về:
+    - Nếu là relative → prefix project_root
+    - Nếu bắt đầu bằng drive letter khác → cảnh báo (server sẽ guard)
+    - Normalize separator
+    """
+    root = os.path.abspath(project_root)
+    fixed = []
+    for item in items:
+        # item có thể là str (files_to_delete) hoặc dict (files_to_write)
+        if isinstance(item, str):
+            fixed.append(_fix_one_path(item, root))
+        elif isinstance(item, dict):
+            item = dict(item)
+            item["path"] = _fix_one_path(item.get("path", ""), root)
+            fixed.append(item)
+    return fixed
+
+
+def _fix_one_path(raw: str, root: str) -> str:
+    if not raw:
+        return raw
+    # Normalize slashes
+    p = raw.strip().replace("/", os.sep).replace("\\", os.sep)
+    # Nếu là relative path (không có drive letter trên Windows, không bắt đầu bằng /)
+    if not os.path.isabs(p):
+        p = os.path.join(root, p.lstrip(os.sep))
+    return p
+
 
 def _safe_max_tokens(system: str, messages: list) -> int:
     chars     = len(system) + sum(len(m.get("content", "")) for m in messages)
@@ -161,14 +211,15 @@ def _call(system: str, messages: list) -> str:
         print(f"[Token] prompt={u.prompt_tokens} completion={u.completion_tokens} total={u.total_tokens}")
         return resp.choices[0].message.content
     except Exception as e:
-        if e.status_code == 401:
-            msg = "❌ Lỗi xác thực GROQ_API_KEY. Kiểm tra file .env"
-        elif e.status_code == 429:
+        err = str(e).lower()
+        if "401" in err or "auth" in err:
+            msg = "❌ Lỗi xác thực GROQ_API_KEY"
+        elif "429" in err or "rate" in err:
             msg = "⏳ Rate limit. Thử lại sau vài giây."
-        elif e.status_code == 413:
+        elif "413" in err or "context" in err or "length" in err:
             msg = "⚠️ Prompt quá dài. Đóng bớt file context hoặc nhấn New Chat."
         else:
-            msg = f"❌ Lỗi: {str(e)}"
+            msg = f"❌ Lỗi: {e}"
         return json.dumps({"reply": msg, "files_to_write": [], "files_to_delete": []})
 
 
@@ -181,18 +232,18 @@ def _parse(raw: str) -> dict:
         return {"reply": raw, "files_to_write": [], "files_to_delete": []}
 
 
-def _build_base_system(project_path: Optional[str], file_contexts: list,
-                        history: list, message: str, system_template: str) -> tuple:
-    """Build system prompt + messages chung cho mọi loại call."""
-    system = system_template
-    if project_path:
-        tree = _compact_tree(project_path, TREE_BUDGET)
-        system += f"\n\n## FILE TREE:\n{tree}"
+def _build_system(project_path: Optional[str], file_contexts: list,
+                  message: str, system_fn) -> tuple:
+    """Build system + messages, inject tree + file contexts."""
+    root   = os.path.abspath(project_path) if project_path else None
+    system = system_fn(root) if root else SYSTEM_BASE
+    if root:
+        tree = _compact_tree(root, TREE_BUDGET)
+        system += f"\n\n## FILE TREE (toàn bộ path tuyệt đối):\n{tree}"
     ctx = _trim_file_contexts(file_contexts, CONTEXT_BUDGET, message)
     if ctx:
         system += f"\n\n## Files đang mở:{ctx}"
-    msgs = _trim_history(history, HISTORY_BUDGET) + [{"role":"user","content":message}]
-    return system, msgs
+    return system, root
 
 
 # ─── AIAgent ──────────────────────────────────────────────────────────────────
@@ -206,50 +257,39 @@ class AIAgent:
         history: list,
         project_path: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
-        """
-        Agentic loop — yield từng event về cho server để stream SSE:
-          {"type":"plan",    "data": {summary, steps}}
-          {"type":"step_start", "data": {step_id, title, description}}
-          {"type":"step_done",  "data": {step_id, files_written, files_deleted, summary}}
-          {"type":"done",    "data": {reply, total_files_written, total_files_deleted}}
-          {"type":"error",   "data": {message}}
-        """
+
+        root = os.path.abspath(project_path) if project_path else None
+
         # ── PHASE 1: PLAN ─────────────────────────────────────────────────────
-        plan_system, plan_msgs = _build_base_system(
-            project_path, file_contexts, history, message, PLAN_SYSTEM
-        )
-        plan_raw  = _call(plan_system, plan_msgs)
-        plan_data = _parse(plan_raw)
+        plan_sys, _ = _build_system(root, file_contexts, message, _plan_system)
+        plan_msgs   = _trim_history(history, HISTORY_BUDGET) + [{"role":"user","content":message}]
+        plan_data   = _parse(_call(plan_sys, plan_msgs))
 
         is_complex = plan_data.get("is_complex", False)
         steps      = plan_data.get("steps", [])
         summary    = plan_data.get("summary", message)
 
-        # Simple request → single call, không cần loop
+        # ── Simple: single call ───────────────────────────────────────────────
         if not is_complex or not steps:
-            yield {"type": "plan", "data": {"summary": summary, "steps": [], "is_complex": False}}
-            single_system, single_msgs = _build_base_system(
-                project_path, file_contexts, history, message, SINGLE_SYSTEM
-            )
-            raw  = _call(single_system, single_msgs)
-            data = _parse(raw)
-            yield {
-                "type": "done",
-                "data": {
-                    "reply":               data.get("reply", ""),
-                    "files_to_write":      data.get("files_to_write", []),
-                    "files_to_delete":     data.get("files_to_delete", []),
-                    "total_files_written": len(data.get("files_to_write", [])),
-                }
-            }
+            yield {"type":"plan","data":{"summary":summary,"steps":[],"is_complex":False}}
+            single_sys, _ = _build_system(root, file_contexts, message, _single_system)
+            single_msgs   = _trim_history(history, HISTORY_BUDGET) + [{"role":"user","content":message}]
+            data = _parse(_call(single_sys, single_msgs))
+            # Fix paths trước khi trả về
+            if root:
+                data["files_to_write"]  = _fix_paths(data.get("files_to_write", []),  root)
+                data["files_to_delete"] = _fix_paths(data.get("files_to_delete", []), root)
+            yield {"type":"done","data":{
+                "reply":           data.get("reply",""),
+                "files_to_write":  data.get("files_to_write",[]),
+                "files_to_delete": data.get("files_to_delete",[]),
+            }}
             return
 
-        # ── PHASE 2: EXECUTE từng step ────────────────────────────────────────
-        yield {"type": "plan", "data": {"summary": summary, "steps": steps, "is_complex": True}}
+        # ── Complex: agentic loop ─────────────────────────────────────────────
+        yield {"type":"plan","data":{"summary":summary,"steps":steps,"is_complex":True}}
 
-        all_written  = []
-        all_deleted  = []
-        step_summaries = []
+        all_written, all_deleted, step_summaries = [], [], []
 
         for step in steps[:MAX_STEPS]:
             step_id = step.get("id", 0)
@@ -257,77 +297,59 @@ class AIAgent:
             desc    = step.get("description", "")
             files   = step.get("files", [])
 
-            yield {"type": "step_start", "data": {"step_id": step_id, "title": title, "description": desc}}
+            yield {"type":"step_start","data":{"step_id":step_id,"title":title,"description":desc}}
 
-            # Build execute prompt với context của step này
             step_context = (
-                f"Kế hoạch tổng thể: {summary}\n\n"
-                f"Các bước đã hoàn thành:\n" +
-                ("\n".join(f"- Bước {i+1}: {s}" for i, s in enumerate(step_summaries)) or "  (chưa có)") +
-                f"\n\nBước hiện tại ({step_id}/{len(steps)}): {title}\n{desc}\n"
-                f"Files cần xử lý trong bước này: {', '.join(files) or 'xem mô tả'}"
+                f"Kế hoạch: {summary}\n"
+                f"Đã xong: {'; '.join(step_summaries) or 'chưa có'}\n"
+                f"Bước hiện tại ({step_id}/{len(steps)}): {title} — {desc}\n"
+                f"Files bước này: {', '.join(files) or 'xem mô tả'}"
             )
+            exec_sys, _ = _build_system(root, file_contexts, step_context, _execute_system)
+            exec_msgs   = [{"role":"user","content":f"Yêu cầu gốc: {message}\n\n{step_context}"}]
 
-            exec_system, _ = _build_base_system(
-                project_path, file_contexts, [], step_context, EXECUTE_SYSTEM
-            )
-            # Thêm original message để AI có đủ context
-            exec_msgs = [{"role": "user", "content":
-                f"Yêu cầu gốc: {message}\n\n{step_context}"}]
+            exec_data    = _parse(_call(exec_sys, exec_msgs))
+            step_written = exec_data.get("files_to_write", [])
+            step_deleted = exec_data.get("files_to_delete", [])
+            step_summary = exec_data.get("step_summary", title)
 
-            raw      = _call(exec_system, exec_msgs)
-            exec_data = _parse(raw)
-
-            step_written  = exec_data.get("files_to_write", [])
-            step_deleted  = exec_data.get("files_to_delete", [])
-            step_summary  = exec_data.get("step_summary", title)
+            # Fix paths ngay sau mỗi step
+            if root:
+                step_written = _fix_paths(step_written, root)
+                step_deleted = _fix_paths(step_deleted, root)
 
             all_written.extend(step_written)
             all_deleted.extend(step_deleted)
             step_summaries.append(step_summary)
 
-            yield {
-                "type": "step_done",
-                "data": {
-                    "step_id":       step_id,
-                    "title":         title,
-                    "files_to_write":  step_written,
-                    "files_to_delete": step_deleted,
-                    "summary":       step_summary,
-                }
-            }
+            yield {"type":"step_done","data":{
+                "step_id":       step_id,
+                "title":         title,
+                "files_to_write":  step_written,
+                "files_to_delete": step_deleted,
+                "summary":       step_summary,
+            }}
 
-            # Nhỏ delay để tránh rate limit
             await asyncio.sleep(0.3)
 
-        # ── PHASE 3: DONE ─────────────────────────────────────────────────────
-        final_reply = (
-            f"✅ Hoàn thành: **{summary}**\n\n"
-            + "\n".join(f"**Bước {i+1}:** {s}" for i, s in enumerate(step_summaries))
-            + f"\n\n📁 Tổng cộng: {len(all_written)} file ghi, {len(all_deleted)} file xóa."
-        )
-
-        yield {
-            "type": "done",
-            "data": {
-                "reply":           final_reply,
-                "files_to_write":  all_written,
-                "files_to_delete": all_deleted,
-                "total_files_written": len(all_written),
-            }
-        }
+        yield {"type":"done","data":{
+            "reply": (
+                f"✅ Hoàn thành: **{summary}**\n\n"
+                + "\n".join(f"**Bước {i+1}:** {s}" for i,s in enumerate(step_summaries))
+                + f"\n\n📁 {len(all_written)} file ghi, {len(all_deleted)} file xóa."
+            ),
+            "files_to_write":  all_written,
+            "files_to_delete": all_deleted,
+        }}
 
     async def chat(self, message, file_contexts, history, project_path=None) -> dict:
-        """Wrapper non-stream cho backward compat (analyze panel, etc.)"""
-        result = {"reply": "", "files_to_write": [], "files_to_delete": []}
+        result = {"reply":"","files_to_write":[],"files_to_delete":[]}
         async for event in self.chat_stream(message, file_contexts, history, project_path):
             if event["type"] == "done":
                 d = event["data"]
-                result["reply"]           = d.get("reply", "")
-                result["files_to_write"]  = d.get("files_to_write", [])
-                result["files_to_delete"] = d.get("files_to_delete", [])
+                result.update({"reply":d.get("reply",""),"files_to_write":d.get("files_to_write",[]),"files_to_delete":d.get("files_to_delete",[])})
             elif event["type"] == "error":
-                result["reply"] = event["data"].get("message", "❌ Lỗi")
+                result["reply"] = event["data"].get("message","❌ Lỗi")
         return result
 
     async def analyze_project(self, summary: dict, focus: Optional[str] = None) -> str:
@@ -339,16 +361,16 @@ class AIAgent:
 
         files_text = "".join(
             f"\n### {f['relative_path']}\n```{f['language']}\n{f['content'][:500]}\n```\n"
-            for f in summary.get("files", [])[:12]
+            for f in summary.get("files",[])[:12]
         )
         prompt = (
             f"Project: {summary.get('name')} | Files: {summary.get('total_files')} | "
-            f"Languages: {json.dumps(summary.get('languages',{}), ensure_ascii=False)}\n\n"
+            f"Languages: {json.dumps(summary.get('languages',{}),ensure_ascii=False)}\n\n"
             f"## Cấu trúc:\n{summary.get('tree_text','')[:TREE_BUDGET]}\n\n"
             f"## Code:\n{files_text}\n\n"
             f"Yêu cầu: {focus_hint}\n"
             f"Phân tích: 1.Kiến trúc 2.Điểm mạnh 3.Vấn đề(path+dòng) 4.Đề xuất 5.Bước tiếp"
         )
-        raw = _call(SYSTEM_BASE, [{"role":"user","content":prompt}])
+        raw  = _call(SYSTEM_BASE, [{"role":"user","content":prompt}])
         data = _parse(raw)
         return data.get("reply", raw)
