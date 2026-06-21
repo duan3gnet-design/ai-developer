@@ -281,7 +281,7 @@ export default function ChatPanel() {
       } else if (type === 'step_done') {
         const written  = data.files_written  || []
         const deleted  = data.files_deleted  || []
-        if (written.some(f=>f.success) || deleted.some(f=>f.success)) anyFileOp = true
+        if (written.some(f=>f.success) || deleted.some(f=>f.success)) reloadTree()
         useAppStore.setState(s => {
           const msgs = [...s.messages]
           const idx  = aiMsgIdRef.current
@@ -300,7 +300,7 @@ export default function ChatPanel() {
       } else if (type === 'done') {
         const written = data.files_written  || []
         const deleted = data.files_deleted  || []
-        if (written.some(f=>f.success) || deleted.some(f=>f.success)) anyFileOp = true
+        if (written.some(f=>f.success) || deleted.some(f=>f.success)) reloadTree()
         patchAiMsg({
           content:      data.reply || '',
           isStreaming:  false,
@@ -310,7 +310,6 @@ export default function ChatPanel() {
         })
         setThinking(false)
         setThinkLabel('')
-        if (anyFileOp) reloadTree()
 
       } else if (type === 'error') {
         patchAiMsg({ content:`❌ ${data.message}`, isStreaming:false })

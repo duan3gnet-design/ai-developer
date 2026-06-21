@@ -136,7 +136,7 @@ def delete_path(raw: str, project_path: Optional[str] = None) -> dict:
 def write_file_op(file_path: str, content: str,
                   project_path: Optional[str] = None) -> dict:    
     if file_path and not file_path.startswith(project_path): 
-        file_path = project_path + file_path
+        file_path = project_path + "\\" + file_path
     p      = Path(normalize(file_path))
     action = "update" if p.exists() else "create"
 
