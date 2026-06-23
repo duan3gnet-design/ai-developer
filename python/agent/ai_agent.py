@@ -10,13 +10,14 @@ import asyncio
 from typing import Optional, AsyncGenerator
 from groq import Groq
 from agent.code_reader import CodeReader
+from agent.experience_store import build_experience_prompt
 
 client      = Groq(api_key=os.environ.get("GROQ_API_KEY", ""))
 code_reader = CodeReader()
 
 MODEL             = "qwen/qwen3-32b"
-CONTEXT_WINDOW    = 32_000
-COMPLETION_TARGET = 4_000
+CONTEXT_WINDOW    = 6_000
+COMPLETION_TARGET = 5_000
 COMPLETION_MIN    = 512
 COMPLETION_MAX    = 6_000
 MAX_STEPS         = 10
@@ -49,7 +50,7 @@ Trả về JSON:
       "id": 1,
       "title": "Tên bước",
       "description": "Chi tiết",
-      "files": ["{example}"]
+      "files": []
     }}
   ]
 }}
@@ -57,7 +58,7 @@ Trả về JSON:
 QUY TẮC PATH (BẮT BUỘC):
 - Mọi path PHẢI bắt đầu bằng PROJECT_ROOT="{root}"
 - File cũ: copy y chang từ FILE TREE bên dưới
-- File mới: "{root}{sep}sub{sep}dir{sep}FileName.java" (ghép PROJECT_ROOT + đường dẫn con)
+- File mới: ghép PROJECT_ROOT + đường dẫn con
 - TUYỆT ĐỐI không dùng relative path, không slash ở đầu, không drive letter khác
 - is_complex=false nếu chỉ hỏi/phân tích hoặc 1 file → steps=[]
 - Mỗi step 1-3 file, tối đa 10 steps"""
@@ -76,14 +77,14 @@ Nhiệm vụ: Thực hiện đúng 1 bước trong kế hoạch.
 Trả về JSON:
 {{
   "step_summary": "Tóm tắt bước này",
-  "files_to_write": [{{"path": "{example_w}", "content": "toàn bộ nội dung"}}],
-  "files_to_delete": ["{example_d}"]
+  "files_to_write": [{{"path": "", "content": "toàn bộ nội dung"}}],
+  "files_to_delete": []
 }}
 
 QUY TẮC PATH (BẮT BUỘC):
 - Mọi path PHẢI bắt đầu bằng PROJECT_ROOT="{root}"
 - File cũ cần xóa: copy y chang từ FILE TREE
-- File mới: ghép "{root}{sep}" + đường dẫn con
+- File mới: ghép PROJECT_ROOT + đường dẫn con
 - TUYỆT ĐỐI không relative path, không path ngoài PROJECT_ROOT
 - content HOÀN CHỈNH, không dùng // ... existing code
 - JSON hợp lệ, không text ngoài JSON"""
@@ -141,7 +142,7 @@ def _fix_one_path(raw: str, root: str) -> str:
 def _safe_max_tokens(system: str, messages: list) -> int:
     chars     = len(system) + sum(len(m.get("content", "")) for m in messages)
     est       = chars // 3
-    available = CONTEXT_WINDOW - est - 300
+    available = CONTEXT_WINDOW - est - 100
     result    = max(COMPLETION_MIN, min(COMPLETION_TARGET, available, COMPLETION_MAX))
     print(f"[Token] prompt_est={est} max_completion={result}")
     return result
@@ -234,7 +235,7 @@ def _parse(raw: str) -> dict:
 
 def _build_system(project_path: Optional[str], file_contexts: list,
                   message: str, system_fn) -> tuple:
-    """Build system + messages, inject tree + file contexts."""
+    """Build system + messages, inject tree + file contexts + experiences."""
     root   = os.path.abspath(project_path) if project_path else None
     system = system_fn(root) if root else SYSTEM_BASE
     if root:
@@ -243,6 +244,10 @@ def _build_system(project_path: Optional[str], file_contexts: list,
     ctx = _trim_file_contexts(file_contexts, CONTEXT_BUDGET, message)
     if ctx:
         system += f"\n\n## Files đang mở:{ctx}"
+    # Inject kinh nghiệm người dùng liên quan
+    exp_prompt = build_experience_prompt(message)
+    if exp_prompt:
+        system += exp_prompt
     return system, root
 
 

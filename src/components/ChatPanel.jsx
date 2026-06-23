@@ -208,16 +208,84 @@ function ThinkingIndicator({ label, onCancel }) {
   )
 }
 
+// ─── Auto-extract helper ────────────────────────────────────────────────────
+
+async function triggerAutoExtract(userMsg, aiReply) {
+  if (!aiReply || aiReply.length < 200) return []
+  try {
+    const res = await fetch('http://localhost:8765/experiences/auto-extract', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ user_message: userMsg, ai_reply: aiReply }),
+    })
+    const data = await res.json()
+    return data.saved || []
+  } catch {
+    return []
+  }
+}
+
+// ─── Toast kinh nghiệm được lưu ──────────────────────────────────────────────
+
+function ExperienceToast({ experiences, onClose }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 6000)
+    return () => clearTimeout(t)
+  }, [onClose])
+
+  if (!experiences.length) return null
+  return (
+    <div style={{
+      position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+      display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 320,
+    }}>
+      {experiences.map(exp => (
+        <div key={exp.id} style={{
+          background: 'var(--bg-2)', border: '1px solid var(--accent-dim)',
+          borderLeft: '3px solid var(--accent)', borderRadius: 'var(--radius-md)',
+          padding: '10px 14px', boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+          animation: 'slideIn 0.2s ease',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 14 }}>📚</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>Đã lưu kinh nghiệm</span>
+            <button onClick={onClose} style={{
+              marginLeft: 'auto', background: 'none', border: 'none',
+              color: 'var(--text-3)', cursor: 'pointer', fontSize: 13, lineHeight: 1,
+            }}>×</button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-1)', fontWeight: 500, marginBottom: 2 }}>
+            {exp.title}
+          </div>
+          {exp.tags?.length > 0 && (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+              {exp.tags.map(t => (
+                <span key={t} style={{
+                  fontSize: 10, padding: '1px 6px', borderRadius: 20,
+                  background: 'var(--accent-dim)', color: 'var(--accent)',
+                }}>{t}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+      <style>{`@keyframes slideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
+    </div>
+  )
+}
+
 // ─── Main ChatPanel ───────────────────────────────────────────────────────────
 
 export default function ChatPanel() {
   const { messages, addMessage, setThinking, isThinking, fileContexts, removeFileContext, projectPath, setFileTree } = useAppStore()
-  const [input, setInput]       = useState('')
-  const [backendOk, setBackendOk] = useState(null)
+  const [input, setInput]           = useState('')
+  const [backendOk, setBackendOk]   = useState(null)
   const [thinkLabel, setThinkLabel] = useState('')
-  const bottomRef  = useRef(null)
-  const cancelRef  = useRef(null)   // { cancel() }
-  const aiMsgIdRef = useRef(null)   // index của AI message đang stream
+  const [toastExps, setToastExps]   = useState([])
+  const bottomRef      = useRef(null)
+  const cancelRef      = useRef(null)
+  const aiMsgIdRef     = useRef(null)
+  const lastUserMsgRef = useRef('')
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:'smooth' }) }, [messages, isThinking])
   useEffect(() => { agentApi.health().then(() => setBackendOk(true)).catch(() => setBackendOk(false)) }, [])
@@ -301,15 +369,20 @@ export default function ChatPanel() {
         const written = data.files_written  || []
         const deleted = data.files_deleted  || []
         if (written.some(f=>f.success) || deleted.some(f=>f.success)) reloadTree()
+        const finalReply = data.reply || ''
         patchAiMsg({
-          content:      data.reply || '',
-          isStreaming:  false,
+          content:       finalReply,
+          isStreaming:   false,
           currentStepId: null,
           filesWritten:  [...(useAppStore.getState().messages[aiMsgIdRef.current]?.filesWritten||[]), ...written],
           filesDeleted:  [...(useAppStore.getState().messages[aiMsgIdRef.current]?.filesDeleted||[]), ...deleted],
         })
         setThinking(false)
         setThinkLabel('')
+        // Auto-extract trong background — không block UI
+        triggerAutoExtract(lastUserMsgRef.current, finalReply).then(saved => {
+          if (saved.length > 0) setToastExps(saved)
+        })
 
       } else if (type === 'error') {
         patchAiMsg({ content:`❌ ${data.message}`, isStreaming:false })
@@ -325,6 +398,7 @@ export default function ChatPanel() {
     const msg = (text || input).trim()
     if (!msg || isThinking) return
     setInput('')
+    lastUserMsgRef.current = msg
     addMessage({ role:'user', content:msg })
     callAgent(msg)
   }, [input, isThinking, addMessage, callAgent])
@@ -370,6 +444,9 @@ export default function ChatPanel() {
 
   return (
     <div style={s.root}>
+      {toastExps.length > 0 && (
+        <ExperienceToast experiences={toastExps} onClose={() => setToastExps([])} />
+      )}
       <div style={s.messages}>
         {messages.length === 0 && (
           <div style={s.empty}>

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from agent.code_reader import CodeReader, IGNORE_DIRS
 from agent.ai_agent import AIAgent
+from agent import experience_store as exp_store
 
 app = FastAPI(title="AI Developer Agent", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -43,8 +44,26 @@ class WriteFileRequest(BaseModel):
     content: str
     project_path: Optional[str] = None
 
+class ExperienceCreate(BaseModel):
+    title: str
+    problem: str
+    solution: str
+    context: str = ""
+    tags: List[str] = []
 
-# ─── Path helpers ─────────────────────────────────────────────────────────────
+class ExperienceUpdate(BaseModel):
+    title: Optional[str] = None
+    problem: Optional[str] = None
+    solution: Optional[str] = None
+    context: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class AutoExtractRequest(BaseModel):
+    user_message: str
+    ai_reply: str
+
+
 
 def normalize(p: str) -> str:
     """Chuẩn hóa separator theo OS."""
@@ -245,6 +264,70 @@ async def read_project(path: str, max_files: int = 50):
         return code_reader.read_project(path, max_files=max_files)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Experience endpoints ────────────────────────────────────────────────────
+
+@app.post("/experiences/auto-extract")
+def auto_extract_experience(req: AutoExtractRequest):
+    """Tự động trích xuất kinh nghiệm từ cặp (user_message, ai_reply)."""
+    saved = exp_store.auto_extract(
+        user_message=req.user_message,
+        ai_reply=req.ai_reply,
+    )
+    return {"saved": saved, "count": len(saved)}
+
+
+@app.get("/experiences")
+def list_experiences(q: Optional[str] = None, tag: Optional[str] = None):
+    """Lấy toàn bộ hoặc tìm kiếm kinh nghiệm theo query/tag."""
+    if q or tag:
+        tags = [tag] if tag else []
+        results = exp_store.search_experiences(q or "", tags=tags)
+        return {"experiences": results, "total": len(results)}
+    all_exp = exp_store.get_all_experiences()
+    return {"experiences": all_exp, "total": len(all_exp)}
+
+
+@app.post("/experiences", status_code=201)
+def create_experience(req: ExperienceCreate):
+    """Thêm kinh nghiệm mới."""
+    record = exp_store.add_experience(
+        title=req.title,
+        problem=req.problem,
+        solution=req.solution,
+        context=req.context,
+        tags=req.tags,
+    )
+    return {"experience": record}
+
+
+@app.get("/experiences/{exp_id}")
+def get_experience(exp_id: str):
+    """Lấy chi tiết một kinh nghiệm."""
+    record = exp_store.get_experience(exp_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Không tìm thấy experience")
+    return {"experience": record}
+
+
+@app.put("/experiences/{exp_id}")
+def update_experience(exp_id: str, req: ExperienceUpdate):
+    """Cập nhật kinh nghiệm."""
+    fields = {k: v for k, v in req.model_dump().items() if v is not None}
+    record = exp_store.update_experience(exp_id, **fields)
+    if not record:
+        raise HTTPException(status_code=404, detail="Không tìm thấy experience")
+    return {"experience": record}
+
+
+@app.delete("/experiences/{exp_id}")
+def delete_experience(exp_id: str):
+    """Xóa kinh nghiệm."""
+    ok = exp_store.delete_experience(exp_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Không tìm thấy experience")
+    return {"success": True}
 
 
 if __name__ == "__main__":

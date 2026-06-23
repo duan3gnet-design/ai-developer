@@ -3,12 +3,14 @@ import Sidebar from './components/Sidebar'
 import ChatPanel from './components/ChatPanel'
 import CodeEditor from './components/CodeEditor'
 import AnalyzePanel from './components/AnalyzePanel'
+import ExperiencePanel from './components/ExperiencePanel'
 import { useAppStore } from './store/appStore'
 
 const PANELS = [
-  { id: 'chat',    label: '💬 Chat',     },
-  { id: 'editor',  label: '</> Editor',  },
-  { id: 'analyze', label: '📊 Analyze',  },
+  { id: 'chat',       label: '💬 Chat',        },
+  { id: 'editor',     label: '</> Editor',     },
+  { id: 'analyze',    label: '📊 Analyze',     },
+  { id: 'experience', label: '📚 Experience',  },
 ]
 
 export default function App() {
@@ -95,7 +97,8 @@ export default function App() {
         <div style={s.main}>
           {activePanel === 'chat'    && <ChatPanel />}
           {activePanel === 'editor'  && <CodeEditor />}
-          {activePanel === 'analyze' && <AnalyzePanel />}
+          {activePanel === 'analyze'    && <AnalyzePanel />}
+          {activePanel === 'experience' && <ExperiencePanel />}
         </div>
       </div>
 
