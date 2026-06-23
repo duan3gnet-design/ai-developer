@@ -33,8 +33,6 @@ Trả lời bằng tiếng Việt. Code phải đầy đủ, không placeholder.
 
 
 def _plan_system(root: str) -> str:
-    sep = os.sep
-    example = root + sep + "src" + sep + "main" + sep + "java" + sep + "NewService.java"
     return SYSTEM_BASE + f"""
 
 PROJECT_ROOT: {root}
@@ -56,7 +54,7 @@ Trả về JSON:
 }}
 
 QUY TẮC PATH (BẮT BUỘC):
-- Mọi path PHẢI bắt đầu bằng PROJECT_ROOT="{root}"
+- Mọi path PHẢI bắt đầu bằng PROJECT_ROOT
 - File cũ: copy y chang từ FILE TREE bên dưới
 - File mới: ghép PROJECT_ROOT + đường dẫn con
 - TUYỆT ĐỐI không dùng relative path, không slash ở đầu, không drive letter khác
@@ -65,9 +63,6 @@ QUY TẮC PATH (BẮT BUỘC):
 
 
 def _execute_system(root: str) -> str:
-    sep = os.sep
-    example_w = root + sep + "src" + sep + "NewFile.java"
-    example_d = root + sep + "src" + sep + "OldFile.java"
     return SYSTEM_BASE + f"""
 
 PROJECT_ROOT: {root}
@@ -82,7 +77,7 @@ Trả về JSON:
 }}
 
 QUY TẮC PATH (BẮT BUỘC):
-- Mọi path PHẢI bắt đầu bằng PROJECT_ROOT="{root}"
+- Mọi path PHẢI bắt đầu bằng PROJECT_ROOT
 - File cũ cần xóa: copy y chang từ FILE TREE
 - File mới: ghép PROJECT_ROOT + đường dẫn con
 - TUYỆT ĐỐI không relative path, không path ngoài PROJECT_ROOT
@@ -91,18 +86,16 @@ QUY TẮC PATH (BẮT BUỘC):
 
 
 def _single_system(root: str) -> str:
-    sep = os.sep
-    example = root + sep + "src" + sep + "File.java"
     return SYSTEM_BASE + f"""
 
 PROJECT_ROOT: {root}
 
 Khi tạo/sửa/xóa file → trả về JSON:
-{{"reply":"...","files_to_write":[{{"path":"{example}","content":"..."}}],"files_to_delete":["{example}"]}}
+{{"reply":"...","files_to_write":[{{"path":"","content":"..."}}],"files_to_delete":[]}}
 
 QUY TẮC PATH (BẮT BUỘC):
-- Mọi path PHẢI bắt đầu bằng PROJECT_ROOT="{root}"
-- File cũ: copy từ FILE TREE. File mới: "{root}{sep}" + đường dẫn con
+- Mọi path PHẢI bắt đầu bằng PROJECT_ROOT
+- File cũ: copy từ FILE TREE. File mới: PROJECT_ROOT + đường dẫn con
 - content đầy đủ. Chỉ hỏi/phân tích: files_to_write=[], files_to_delete=[]"""
 
 
