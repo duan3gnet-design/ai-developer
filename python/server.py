@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from agent.code_reader import CodeReader, IGNORE_DIRS
 from agent.ai_agent import AIAgent
 from agent import experience_store as exp_store
+from agent.project_context import scan_project, invalidate_cache
 
 app = FastAPI(title="AI Developer Agent", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -57,6 +58,11 @@ class ExperienceUpdate(BaseModel):
     solution: Optional[str] = None
     context: Optional[str] = None
     tags: Optional[List[str]] = None
+
+
+class ScanContextRequest(BaseModel):
+    project_path: str
+    force: bool = False
 
 
 class AutoExtractRequest(BaseModel):
@@ -267,6 +273,36 @@ async def read_project(path: str, max_files: int = 50):
 
 
 # ─── Experience endpoints ────────────────────────────────────────────────────
+
+@app.post("/project-context/scan")
+def scan_project_context(req: ScanContextRequest):
+    """Scan project để xây dựng context (stack, conventions, key files). Có cache."""
+    try:
+        ctx = scan_project(req.project_path, force=req.force)
+        # Loại preview dài khỏi response — chỉ trả metadata
+        summary = {
+            "project_name": ctx["project_name"],
+            "total_files":  ctx["total_files"],
+            "stack":        ctx["stack"],
+            "conventions":  ctx["conventions"],
+            "features":     ctx.get("features", {}),
+            "key_files":    [
+                {"path": kf["path"], "lines": kf["lines"]}
+                for kf in ctx.get("key_files", [])
+            ],
+            "ext_stats":    ctx["ext_stats"],
+        }
+        return {"context": summary, "cached": not req.force}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/project-context/invalidate")
+def invalidate_project_context(req: ScanContextRequest):
+    """Xóa cache context của project để force re-scan lần sau."""
+    invalidate_cache(req.project_path)
+    return {"success": True}
+
 
 @app.post("/experiences/auto-extract")
 def auto_extract_experience(req: AutoExtractRequest):

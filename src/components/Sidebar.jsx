@@ -116,9 +116,12 @@ function TreeNode({ node, depth, onFileClick, onDirLoad }) {
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 export default function Sidebar() {
-  const { projectPath, setProjectPath, fileTree, setFileTree, openFile, addFileContext } = useAppStore()
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const { projectPath, setProjectPath, fileTree, setFileTree, openFile, addFileContext,
+          projectContext, setProjectContext, clearProjectContext } = useAppStore()
+  const [loading, setLoading]         = useState(false)
+  const [scanning, setScanning]       = useState(false)
+  const [error, setError]             = useState(null)
+  const [ctxExpanded, setCtxExpanded] = useState(false)
 
   const loadProject = useCallback(async (path) => {
     if (!path || !fs) return
@@ -149,8 +152,29 @@ export default function Sidebar() {
   const handleSelectDir = useCallback(async () => {
     if (!fs) return
     const dir = await fs.selectDir()
-    if (dir) { setProjectPath(dir); await loadProject(dir) }
-  }, [loadProject, setProjectPath])
+    if (dir) { setProjectPath(dir); clearProjectContext(); await loadProject(dir) }
+  }, [loadProject, setProjectPath, clearProjectContext])
+
+  const handleScanContext = useCallback(async (force = false) => {
+    if (!projectPath) return
+    setScanning(true)
+    try {
+      const res = await fetch('http://localhost:8765/project-context/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_path: projectPath, force }),
+      })
+      const data = await res.json()
+      if (data.context) {
+        setProjectContext(data.context)
+        setCtxExpanded(true)
+      }
+    } catch (e) {
+      console.error('[ScanContext]', e)
+    } finally {
+      setScanning(false)
+    }
+  }, [projectPath, setProjectContext])
 
   const handleFileClick = useCallback(async (node) => {
     if (!fs) return
@@ -203,6 +227,102 @@ export default function Sidebar() {
           <button style={s.btn} onClick={() => loadProject(projectPath)} title="Reload (↺)">↺</button>
           <button style={s.btn} onClick={handleSelectDir} title="Chọn thư mục (…)">…</button>
         </div>
+        {/* Project Context bar */}
+        {projectPath && (
+          <div style={{ marginTop: 6 }}>
+            {!projectContext ? (
+              <button
+                onClick={() => handleScanContext(false)}
+                disabled={scanning}
+                style={{
+                  width: '100%', padding: '5px 8px', fontSize: 11,
+                  background: 'var(--bg-3)', border: '1px dashed var(--border)',
+                  borderRadius: 'var(--radius-sm)', color: 'var(--text-3)',
+                  cursor: scanning ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                {scanning
+                  ? <><span style={{ animation: 'spin 1s linear infinite', display:'inline-block' }}>⧗</span> Đang scan...</>  
+                  : <>🔍 Scan project context</>}
+                <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+              </button>
+            ) : (
+              <div style={{ border: '1px solid var(--accent-dim)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+                {/* Header badge */}
+                <div
+                  onClick={() => setCtxExpanded(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '4px 8px', cursor: 'pointer',
+                    background: 'var(--accent-dim)',
+                  }}
+                >
+                  <span style={{ fontSize: 11 }}>🏗️</span>
+                  <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: 'var(--accent)' }}>
+                    {projectContext.stack?.frameworks?.[0] || projectContext.project_name}
+                  </span>
+                  <span style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                    {projectContext.total_files}f
+                  </span>
+                  <button
+                    onClick={e => { e.stopPropagation(); handleScanContext(true) }}
+                    disabled={scanning}
+                    title="Re-scan"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      fontSize: 11, color: 'var(--text-3)', padding: '0 2px',
+                    }}
+                  >{scanning ? '⧗' : '↻'}</button>
+                  <span style={{ fontSize: 10, color: 'var(--text-3)' }}>{ctxExpanded ? '▴' : '▾'}</span>
+                </div>
+                {/* Detail */}
+                {ctxExpanded && (
+                  <div style={{ padding: '6px 8px', background: 'var(--bg-1)', fontSize: 11 }}>
+                    {projectContext.stack?.languages?.length > 0 && (
+                      <div style={{ color: 'var(--text-2)', marginBottom: 3 }}>
+                        💻 {projectContext.stack.languages.join(', ')}
+                      </div>
+                    )}
+                    {projectContext.stack?.databases?.length > 0 && (
+                      <div style={{ color: 'var(--text-2)', marginBottom: 3 }}>
+                        🗄 {projectContext.stack.databases.join(', ')}
+                      </div>
+                    )}
+                    {/* Features section */}
+                    {projectContext.features?.description && (
+                      <div style={{ color: 'var(--text-2)', marginBottom: 3, fontStyle: 'italic' }}>
+                        “{projectContext.features.description}”
+                      </div>
+                    )}
+                    {projectContext.features?.features?.length > 0 && (
+                      <div style={{ marginBottom: 3 }}>
+                        {projectContext.features.features.map((f, i) => (
+                          <div key={i} style={{ fontSize: 10, color: 'var(--text-3)', paddingLeft: 4 }}>
+                            • {f}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {projectContext.stack?.build_tools?.length > 0 && (
+                      <div style={{ color: 'var(--text-3)', marginBottom: 3 }}>
+                        ⚙️ {projectContext.stack.build_tools.join(', ')}
+                      </div>
+                    )}
+                    {projectContext.conventions?.indent && (
+                      <div style={{ color: 'var(--text-3)', marginBottom: 3 }}>
+                        ≣ {projectContext.conventions.indent} | {projectContext.conventions.structure}
+                      </div>
+                    )}
+                    <div style={{ color: 'var(--text-3)', marginTop: 4, borderTop: '1px solid var(--border)', paddingTop: 4 }}>
+                      📄 Key files: {projectContext.key_files?.length || 0}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={s.label}>Explorer</div>

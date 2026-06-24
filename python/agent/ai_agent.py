@@ -11,6 +11,7 @@ from typing import Optional, AsyncGenerator
 from groq import Groq
 from agent.code_reader import CodeReader
 from agent.experience_store import build_experience_prompt
+from agent.project_context import scan_project, build_context_prompt
 
 client      = Groq(api_key=os.environ.get("GROQ_API_KEY", ""))
 code_reader = CodeReader()
@@ -237,6 +238,15 @@ def _build_system(project_path: Optional[str], file_contexts: list,
     ctx = _trim_file_contexts(file_contexts, CONTEXT_BUDGET, message)
     if ctx:
         system += f"\n\n## Files đang mở:{ctx}"
+    # Inject project context (stack, conventions, key files)
+    if root:
+        try:
+            proj_ctx   = scan_project(root)
+            ctx_prompt = build_context_prompt(proj_ctx, budget=2000)
+            if ctx_prompt:
+                system += ctx_prompt
+        except Exception as e:
+            print(f"[ProjectContext] Skip: {e}")
     # Inject kinh nghiệm người dùng liên quan
     exp_prompt = build_experience_prompt(message)
     if exp_prompt:
@@ -259,7 +269,7 @@ class AIAgent:
         root = os.path.abspath(project_path) if project_path else None
 
         # ── PHASE 1: PLAN ─────────────────────────────────────────────────────
-        plan_sys, _ = _build_system(root, file_contexts, message, _plan_system)
+        plan_sys, _ = _build_system(root, [], message, _plan_system)
         plan_msgs   = _trim_history(history, HISTORY_BUDGET) + [{"role":"user","content":message}]
         plan_data   = _parse(_call(plan_sys, plan_msgs))
 
@@ -270,7 +280,7 @@ class AIAgent:
         # ── Simple: single call ───────────────────────────────────────────────
         if not is_complex or not steps:
             yield {"type":"plan","data":{"summary":summary,"steps":[],"is_complex":False}}
-            single_sys, _ = _build_system(root, file_contexts, message, _single_system)
+            single_sys, _ = _build_system(root, [], message, _single_system)
             single_msgs   = _trim_history(history, HISTORY_BUDGET) + [{"role":"user","content":message}]
             data = _parse(_call(single_sys, single_msgs))
             # Fix paths trước khi trả về
@@ -303,7 +313,7 @@ class AIAgent:
                 f"Bước hiện tại ({step_id}/{len(steps)}): {title} — {desc}\n"
                 f"Files bước này: {', '.join(files) or 'xem mô tả'}"
             )
-            exec_sys, _ = _build_system(root, file_contexts, step_context, _execute_system)
+            exec_sys, _ = _build_system(root, [], step_context, _execute_system)
             exec_msgs   = [{"role":"user","content":f"Yêu cầu gốc: {message}\n\n{step_context}"}]
 
             exec_data    = _parse(_call(exec_sys, exec_msgs))
