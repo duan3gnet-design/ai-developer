@@ -201,6 +201,7 @@ function ExperienceCard({ exp, onEdit, onDelete }) {
       border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
       background: 'var(--bg-2)', overflow: 'hidden',
       transition: 'border-color 0.15s',
+      minHeight: expanded ? '300px' : '75px'
     }}
       onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent-dim)'}
       onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}

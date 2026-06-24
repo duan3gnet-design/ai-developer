@@ -189,7 +189,7 @@ export default function Sidebar() {
       dirty: false
     }
     openFile(file)
-    addFileContext(file)
+    // addFileContext(file)
   }, [openFile, addFileContext])
 
   const s = {

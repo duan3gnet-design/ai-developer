@@ -7,6 +7,7 @@ import os
 import re
 import json
 import asyncio
+from pathlib import Path
 from typing import Optional, AsyncGenerator
 from groq import Groq
 from agent.code_reader import CodeReader
@@ -194,6 +195,41 @@ def _trim_file_contexts(file_contexts: list, budget: int, message: str) -> str:
     return "".join(parts)
 
 
+def _read_existing_files(file_paths: list[str], root: str, budget: int = 8000) -> str:
+    """
+    Doc noi dung cac file hien co tren disk de inject vao context
+    truoc khi AI viet/sua. Giup AI biet file dang co gi, tranh ghi de.
+    """
+    if not file_paths:
+        return ""
+    parts = []
+    used  = 0
+    for raw_path in file_paths:
+        # Normalize path
+        p = Path(raw_path.strip().replace("/", os.sep).replace("\\", os.sep))
+        if not p.is_absolute():
+            p = Path(root) / p
+        if not p.exists() or not p.is_file():
+            parts.append(f"\n[{raw_path}] -> CHUA TON TAI (se tao moi)")
+            continue
+        try:
+            content = p.read_text(encoding="utf-8", errors="ignore")
+            lines   = content.splitlines()
+            # Gioi han moi file 200 dong de tranh qua dai
+            preview = "\n".join(lines[:200])
+            if len(lines) > 200:
+                preview += f"\n... (+{len(lines)-200} dong nua)"
+            chunk = f"\n\n[NOI DUNG HIEN TAI: {raw_path} ({len(lines)} dong)]\n```\n{preview}\n```"
+            if used + len(chunk) > budget:
+                parts.append(f"\n[{raw_path}] -> qua lon, bo qua")
+                continue
+            parts.append(chunk)
+            used += len(chunk)
+        except Exception as e:
+            parts.append(f"\n[{raw_path}] -> loi doc: {e}")
+    return "".join(parts)
+
+
 def _call(system: str, messages: list) -> str:
     max_tok = _safe_max_tokens(system, messages)
     try:
@@ -280,8 +316,16 @@ class AIAgent:
         # ── Simple: single call ───────────────────────────────────────────────
         if not is_complex or not steps:
             yield {"type":"plan","data":{"summary":summary,"steps":[],"is_complex":False}}
-            single_sys, _ = _build_system(root, [], message, _single_system)
-            single_msgs   = _trim_history(history, HISTORY_BUDGET) + [{"role":"user","content":message}]
+            single_sys, _ = _build_system(root, file_contexts, message, _single_system)
+            # Inject noi dung file hien co neu co file context
+            existing = ""
+            if root and file_contexts:
+                paths = [f.get("path","") for f in file_contexts if f.get("path")]
+                existing = _read_existing_files(paths, root)
+            single_user = message
+            if existing:
+                single_user += "\n\nNOI DUNG FILE HIEN TAI (BAT BUOC GIU NGUYEN, chi sua phan lien quan):" + existing
+            single_msgs = _trim_history(history, HISTORY_BUDGET) + [{"role":"user","content":single_user}]
             data = _parse(_call(single_sys, single_msgs))
             # Fix paths trước khi trả về
             if root:
@@ -308,11 +352,19 @@ class AIAgent:
             yield {"type":"step_start","data":{"step_id":step_id,"title":title,"description":desc}}
 
             step_context = (
-                f"Kế hoạch: {summary}\n"
-                f"Đã xong: {'; '.join(step_summaries) or 'chưa có'}\n"
-                f"Bước hiện tại ({step_id}/{len(steps)}): {title} — {desc}\n"
-                f"Files bước này: {', '.join(files) or 'xem mô tả'}"
+                f"Ke hoach: {summary}\n"
+                f"Da xong: {'; '.join(step_summaries) or 'chua co'}\n"
+                f"Buoc hien tai ({step_id}/{len(steps)}): {title} - {desc}\n"
+                f"Files buoc nay: {', '.join(files) or 'xem mo ta'}"
             )
+
+            # Doc noi dung file hien co de AI khong ghi de mat code cu
+            existing_content = ""
+            if root and files:
+                existing_content = _read_existing_files(files, root)
+            if existing_content:
+                step_context += "\n\nNOI DUNG CAC FILE HIEN TAI (BAT BUOC GIU NGUYEN, chi sua phan lien quan):" + existing_content
+
             exec_sys, _ = _build_system(root, [], step_context, _execute_system)
             exec_msgs   = [{"role":"user","content":f"Yêu cầu gốc: {message}\n\n{step_context}"}]
 

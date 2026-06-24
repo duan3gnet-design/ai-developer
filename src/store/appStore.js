@@ -65,10 +65,10 @@ export const useAppStore = create((set, get) => ({
   clearMessages: () => set({ messages: [] }),
 
   addFileContext: (file) => {
-    // const { fileContexts } = get()
-    // if (!fileContexts.find(f => f.path === file.path)) {
-    //   set({ fileContexts: [...fileContexts, file] })
-    // }
+    const { fileContexts } = get()
+    if (!fileContexts.find(f => f.path === file.path)) {
+      set({ fileContexts: [...fileContexts, file] })
+    }
   },
   removeFileContext: (path) =>
     set(s => ({ fileContexts: s.fileContexts.filter(f => f.path !== path) })),
