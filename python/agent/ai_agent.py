@@ -242,17 +242,15 @@ def _call(system: str, messages: list) -> str:
         print(f"[Token] prompt={u.prompt_tokens} completion={u.completion_tokens} total={u.total_tokens}")
         return resp.choices[0].message.content
     except Exception as e:
-        err = str(e).lower()
-        if "401" in err or "auth" in err:
-            msg = "❌ Lỗi xác thực GROQ_API_KEY"
-        elif "429" in err or "rate" in err:
+        if e.status_code == 401:
+            msg = "❌ Lỗi xác thực GROQ_API_KEY. Kiểm tra file .env"
+        elif e.status_code == 429:
             msg = "⏳ Rate limit. Thử lại sau vài giây."
-        elif "413" in err or "context" in err or "length" in err:
+        elif e.status_code == 413:
             msg = "⚠️ Prompt quá dài. Đóng bớt file context hoặc nhấn New Chat."
         else:
-            msg = f"❌ Lỗi: {e}"
+            msg = f"❌ Lỗi: {str(e)}"
         return json.dumps({"reply": msg, "files_to_write": [], "files_to_delete": []})
-
 
 def _parse(raw: str) -> dict:
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)

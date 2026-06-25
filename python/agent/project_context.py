@@ -430,7 +430,7 @@ def scan_project(project_path: str, force: bool = False) -> dict:
     all_files = _collect_files(root)
     phash     = _project_hash(root, all_files)   # hash toan bo, khong gioi han
 
-    if not force and key in cache and cache[key].get("hash") == phash:
+    if not force and key in cache:
         print(f"[ProjectContext] Cache hit: {root.name} ({len(all_files)} files)")
         return cache[key]["context"]
 
