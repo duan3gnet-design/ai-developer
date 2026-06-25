@@ -23,14 +23,26 @@ except ImportError:
 
 # --- Config -------------------------------------------------------------------
 
-CACHE_FILE   = Path(__file__).parent.parent / "data" / "project_context_cache.json"
-IGNORE_DIRS  = {
+CACHE_FILE  = Path(__file__).parent.parent / "data" / "project_context_cache.json"
+IGNORE_DIRS = {
     'node_modules', '.git', 'dist', 'build', 'target', '__pycache__',
     '.idea', '.vscode', 'venv', '.venv', 'out', 'bin', 'obj',
     '.gradle', '.mvn', '.next', '.nuxt', 'coverage', '.pytest_cache',
+    'generated-sources', 'generated', '.terraform', 'vendor',
 }
-IGNORE_EXTS  = {'.class', '.pyc', '.pyo', '.o', '.so', '.dll', '.exe',
-                '.jar', '.war', '.zip', '.tar', '.gz', '.lock', '.log'}
+IGNORE_EXTS = {
+    '.class', '.pyc', '.pyo', '.o', '.so', '.dll', '.exe',
+    '.jar', '.war', '.zip', '.tar', '.gz', '.lock', '.log',
+    '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico',
+    '.woff', '.woff2', '.ttf', '.eot', '.map',
+}
+# Chi dem SOURCE_EXTS khi thong ke ngon ngu, tranh nhieu tu .xml, .yml...
+SOURCE_EXTS = {
+    '.java', '.kt', '.scala',
+    '.py',
+    '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
+    '.go', '.rs', '.cs', '.cpp', '.c', '.rb', '.php', '.swift',
+}
 MAX_FILE_PREVIEW = 60
 MAX_KEY_FILES    = 12
 
@@ -44,16 +56,20 @@ def _file_exists(root: Path, *names) -> Optional[Path]:
     return None
 
 
-def _read_first_match(all_files: list[Path], names: list[str], lines: int = MAX_FILE_PREVIEW) -> Optional[str]:
-    for name in names:
-        for f in all_files:
-            if f.name.lower() == name.lower():
-                try:
-                    content = f.read_text(encoding='utf-8', errors='ignore')
-                    return '\n'.join(content.splitlines()[:lines])
-                except Exception:
-                    pass
-    return None
+def _build_name_index(all_files: list[Path]) -> dict[str, list[Path]]:
+    """Index: ten file (lower) -> danh sach Path. Tranh O(n*m) khi tim theo ten."""
+    idx: dict[str, list[Path]] = {}
+    for f in all_files:
+        idx.setdefault(f.name.lower(), []).append(f)
+    return idx
+
+
+def _read_file_safe(path: Path, max_lines: int = MAX_FILE_PREVIEW) -> Optional[str]:
+    try:
+        lines = path.read_text(encoding='utf-8', errors='ignore').splitlines()
+        return '\n'.join(lines[:max_lines])
+    except Exception:
+        return None
 
 
 def _collect_files(root: Path) -> list[Path]:
@@ -70,47 +86,44 @@ def _collect_files(root: Path) -> list[Path]:
     return result
 
 
-def _project_hash(root: Path) -> str:
-    files = sorted(_collect_files(root))[:200]
+def _project_hash(root: Path, all_files: list[Path]) -> str:
+    """Hash toan bo file (khong gioi han 200). Dung ten + mtime."""
     h = hashlib.md5()
-    for f in files:
+    for f in sorted(all_files):
         try:
-            h.update(f.name.encode())
+            h.update(str(f.relative_to(root)).encode())
             h.update(str(int(f.stat().st_mtime)).encode())
         except Exception:
             pass
-    return h.hexdigest()[:12]
+    return h.hexdigest()[:16]
 
 
 # --- Detector: Stack ----------------------------------------------------------
 
-def _detect_stack(root: Path, all_files: list[Path]) -> dict:
-    names = {f.name.lower() for f in all_files}
-    stack = {
-        "languages":   [],
-        "frameworks":  [],
-        "build_tools": [],
-        "databases":   [],
-        "others":      [],
-    }
+def _detect_stack(root: Path, all_files: list[Path], name_idx: dict) -> dict:
+    """
+    Nhan dien stack. Dung name_idx O(1), chi dem SOURCE_EXTS cho ngon ngu,
+    detect Spring Boot bang noi dung file thay vi ten file.
+    """
+    stack = {"languages": [], "frameworks": [], "build_tools": [], "databases": [], "others": []}
 
+    # --- Ngon ngu: chi dem source extensions ---
     ext_count: dict[str, int] = {}
     for f in all_files:
         ext = f.suffix.lower()
-        if ext and ext not in IGNORE_EXTS:
+        if ext in SOURCE_EXTS:
             ext_count[ext] = ext_count.get(ext, 0) + 1
 
     lang_map = {
         '.java': 'Java', '.kt': 'Kotlin', '.scala': 'Scala',
-        '.py':   'Python', '.go': 'Go', '.rs': 'Rust',
-        '.ts':   'TypeScript', '.tsx': 'TypeScript/React',
-        '.js':   'JavaScript', '.jsx': 'JavaScript/React',
-        '.cs':   'C#', '.cpp': 'C++', '.c': 'C',
-        '.rb':   'Ruby', '.php': 'PHP', '.swift': 'Swift',
+        '.py': 'Python', '.go': 'Go', '.rs': 'Rust',
+        '.ts': 'TypeScript', '.tsx': 'TypeScript/React',
+        '.js': 'JavaScript', '.jsx': 'JavaScript/React',
+        '.cs': 'C#', '.cpp': 'C++', '.c': 'C',
+        '.rb': 'Ruby', '.php': 'PHP', '.swift': 'Swift',
     }
-    sorted_exts = sorted(ext_count.items(), key=lambda x: x[1], reverse=True)
     seen_langs: set[str] = set()
-    for ext, _ in sorted_exts:
+    for ext, _ in sorted(ext_count.items(), key=lambda x: x[1], reverse=True):
         lang = lang_map.get(ext)
         if lang and lang not in seen_langs:
             stack["languages"].append(lang)
@@ -118,134 +131,143 @@ def _detect_stack(root: Path, all_files: list[Path]) -> dict:
         if len(stack["languages"]) >= 3:
             break
 
-    if 'pom.xml' in names:
-        stack["build_tools"].append("Maven")
-    if 'build.gradle' in names or 'build.gradle.kts' in names:
-        stack["build_tools"].append("Gradle")
-    if 'package.json' in names:
-        stack["build_tools"].append("npm/Node")
-    if 'cargo.toml' in names:
-        stack["build_tools"].append("Cargo")
-    if 'go.mod' in names:
-        stack["build_tools"].append("Go Modules")
-    if 'pyproject.toml' in names or 'setup.py' in names:
-        stack["build_tools"].append("Python build")
-    if 'requirements.txt' in names:
-        stack["build_tools"].append("pip")
-    if 'makefile' in names:
-        stack["build_tools"].append("Make")
+    # --- Build tools: uu tien file o root ---
+    def at_root(*names) -> bool:
+        return any(p.parent == root for n in names for p in name_idx.get(n.lower(), []))
 
-    if any(('spring' in f.name.lower()
-            or f.name.lower() in ('application.yml', 'application.properties'))
-           for f in all_files):
-        if '.java' in ext_count or '.kt' in ext_count:
+    def anywhere(*names) -> bool:
+        return any(n.lower() in name_idx for n in names)
+
+    if at_root('pom.xml'):                           stack["build_tools"].append("Maven")
+    if at_root('build.gradle', 'build.gradle.kts'):  stack["build_tools"].append("Gradle")
+    if at_root('package.json'):                      stack["build_tools"].append("npm/Node")
+    if at_root('cargo.toml'):                        stack["build_tools"].append("Cargo")
+    if at_root('go.mod'):                            stack["build_tools"].append("Go Modules")
+    if at_root('pyproject.toml', 'setup.py'):        stack["build_tools"].append("Python build")
+    if at_root('requirements.txt'):                  stack["build_tools"].append("pip")
+    if anywhere('makefile', 'GNUmakefile'):          stack["build_tools"].append("Make")
+
+    # --- Spring Boot: detect bang noi dung, khong phai ten file ---
+    if ext_count.get('.java', 0) + ext_count.get('.kt', 0) > 0:
+        spring = False
+        for cfg in ('application.yml', 'application.yaml', 'application.properties'):
+            for p in sorted(name_idx.get(cfg, []), key=lambda x: len(x.parts)):
+                txt = _read_file_safe(p, max_lines=5) or ''
+                if 'spring:' in txt or 'server:' in txt or 'spring.' in txt:
+                    spring = True; break
+            if spring: break
+        if not spring:
+            for p in name_idx.get('pom.xml', []):
+                if 'spring-boot' in (_read_file_safe(p, max_lines=60) or '').lower():
+                    spring = True; break
+        if spring:
             stack["frameworks"].append("Spring Boot")
 
-    if '.py' in ext_count:
-        src = _read_first_match(all_files, ['main.py', 'app.py', 'server.py'], lines=30)
-        if src:
-            low = src.lower()
-            if 'fastapi' in low:
-                stack["frameworks"].append("FastAPI")
-            elif 'flask' in low:
-                stack["frameworks"].append("Flask")
-            elif 'django' in low:
-                stack["frameworks"].append("Django")
+    # --- FastAPI / Flask / Django ---
+    if ext_count.get('.py', 0) > 0:
+        found_py_fw = False
+        for entry in ('main.py', 'app.py', 'server.py'):
+            for p in name_idx.get(entry, []):
+                txt = (_read_file_safe(p, max_lines=30) or '').lower()
+                if 'fastapi' in txt:
+                    stack["frameworks"].append("FastAPI"); found_py_fw = True; break
+                elif 'flask' in txt:
+                    stack["frameworks"].append("Flask");   found_py_fw = True; break
+                elif 'django' in txt:
+                    stack["frameworks"].append("Django");  found_py_fw = True; break
+            if found_py_fw: break
 
-    pkg = _file_exists(root, 'package.json')
-    if pkg:
+    # --- React / Vue / Angular / Next: chi doc root package.json ---
+    for p in name_idx.get('package.json', []):
+        if p.parent != root: continue
         try:
-            pkg_data = json.loads(pkg.read_text(encoding='utf-8', errors='ignore'))
-            deps = {**pkg_data.get('dependencies', {}), **pkg_data.get('devDependencies', {})}
-            if 'next' in deps:
-                stack["frameworks"].append("Next.js")
-            elif 'react' in deps:
-                stack["frameworks"].append("React")
-            if 'vue' in deps:
-                stack["frameworks"].append("Vue")
-            if '@angular' in ' '.join(deps):
-                stack["frameworks"].append("Angular")
-            if 'vite' in deps:
-                stack["others"].append("Vite")
-            if 'tailwindcss' in deps:
-                stack["others"].append("Tailwind CSS")
-            if 'zustand' in deps:
-                stack["others"].append("Zustand")
-            if 'axios' in deps:
-                stack["others"].append("Axios")
-        except Exception:
-            pass
+            pkg  = json.loads(p.read_text(encoding='utf-8', errors='ignore'))
+            deps = {**pkg.get('dependencies', {}), **pkg.get('devDependencies', {})}
+            if 'next'    in deps:  stack["frameworks"].append("Next.js")
+            elif 'react' in deps:  stack["frameworks"].append("React")
+            if 'vue'     in deps:  stack["frameworks"].append("Vue")
+            if any(k.startswith('@angular') for k in deps): stack["frameworks"].append("Angular")
+            for lib, label in [('vite','Vite'),('tailwindcss','Tailwind CSS'),
+                                ('zustand','Zustand'),('axios','Axios'),('electron','Electron')]:
+                if lib in deps: stack["others"].append(label)
+        except Exception: pass
+        break
 
-    if 'dockerfile' in names:
-        stack["others"].append("Docker")
-    if any('docker-compose' in n for n in names):
-        stack["others"].append("Docker Compose")
-    if any('helm' in str(f).lower() or 'chart.yaml' in f.name.lower() for f in all_files):
-        stack["others"].append("Helm/K8s")
+    if anywhere('Dockerfile', 'dockerfile'):                  stack["others"].append("Docker")
+    if anywhere('docker-compose.yml', 'docker-compose.yaml'): stack["others"].append("Docker Compose")
+    if anywhere('Chart.yaml', 'values.yaml'):                 stack["others"].append("Helm/K8s")
 
-    config_text = _read_first_match(
-        all_files,
-        ['application.yml', 'application.yaml', 'application.properties',
-         '.env', 'config.py', 'settings.py'],
-        lines=80,
-    ) or ''
+    # --- Databases: doc config files gan root nhat ---
+    config_text = ''
+    for cfg in ('application.yml','application.yaml','application.properties',
+                '.env','config.py','settings.py','database.py'):
+        for p in sorted(name_idx.get(cfg, []), key=lambda x: len(x.parts))[:2]:
+            config_text += (_read_file_safe(p, max_lines=80) or '') + '\n'
+
     low = config_text.lower()
-    if 'postgresql' in low or 'postgres' in low: stack["databases"].append("PostgreSQL")
-    if 'mysql' in low:                           stack["databases"].append("MySQL")
-    if 'mongodb' in low or 'mongo' in low:       stack["databases"].append("MongoDB")
-    if 'redis' in low:                           stack["databases"].append("Redis")
-    if 'kafka' in low:                           stack["databases"].append("Kafka")
-    if 'elasticsearch' in low:                   stack["databases"].append("Elasticsearch")
+    for kw, label in [('postgresql','PostgreSQL'),('postgres','PostgreSQL'),
+                      ('mysql','MySQL'),('mongodb','MongoDB'),('mongo','MongoDB'),
+                      ('redis','Redis'),('kafka','Kafka'),
+                      ('elasticsearch','Elasticsearch'),('sqlite','SQLite')]:
+        if kw in low and label not in stack["databases"]:
+            stack["databases"].append(label)
 
     for k in stack:
         stack[k] = list(dict.fromkeys(stack[k]))
-
     return stack
 
 
 # --- Detector: Key files ------------------------------------------------------
 
-def _pick_key_files(root: Path, all_files: list[Path], stack: dict) -> list[dict]:
+def _pick_key_files(root: Path, all_files: list[Path],
+                    name_idx: dict, stack: dict) -> list[dict]:
+    """
+    Dung name_idx O(1). Uu tien file gan root (depth nho).
+    Tranh chon nhieu file cung ten o nested folder.
+    """
     priority_names = [
-        'pom.xml', 'build.gradle', 'build.gradle.kts', 'package.json',
-        'application.yml', 'application.yaml', 'application.properties',
-        'docker-compose.yml', 'docker-compose.yaml', 'dockerfile',
-        '.env_exemple', 'requirements.txt', 'pyproject.toml',
-        'main.py', 'app.py', 'server.py', 'main.java', 'application.java',
-        'index.js', 'index.ts', 'main.ts', 'main.js',
-        'router.js', 'router.ts', 'routes.py',
+        'pom.xml','build.gradle','build.gradle.kts','package.json',
+        'application.yml','application.yaml','application.properties',
+        'docker-compose.yml','docker-compose.yaml','dockerfile',
+        '.env','.env_exemple','requirements.txt','pyproject.toml',
+        'main.py','app.py','server.py',
+        'Main.java','Application.java',
+        'index.js','index.ts','main.ts','main.js','main.jsx',
+        'router.js','router.ts','routes.py','urls.py',
+        'settings.py','config.py',
     ]
-
     chosen: list[Path] = []
-    seen: set[str] = set()
+    seen:   set[str]   = set()
 
     for name in priority_names:
-        for f in all_files:
-            if f.name.lower() == name.lower() and str(f) not in seen:
-                chosen.append(f)
-                seen.add(str(f))
-        if len(chosen) >= MAX_KEY_FILES // 2:
-            break
+        if len(chosen) >= MAX_KEY_FILES: break
+        candidates = sorted(name_idx.get(name.lower(), []), key=lambda p: len(p.parts))
+        if candidates:
+            p = candidates[0]
+            if str(p) not in seen:
+                chosen.append(p); seen.add(str(p))
 
-    keywords = ['service', 'controller', 'repository', 'agent', 'config',
-                'gateway', 'handler', 'middleware', 'store', 'hook']
-    for f in all_files:
-        if len(chosen) >= MAX_KEY_FILES:
-            break
-        if any(kw in f.name.lower() for kw in keywords) and str(f) not in seen:
-            chosen.append(f)
-            seen.add(str(f))
+    if len(chosen) < MAX_KEY_FILES:
+        keywords  = ['service','controller','repository','agent','gateway',
+                     'handler','middleware','store','hook','filter','interceptor']
+        src_files = sorted(
+            [f for f in all_files if f.suffix.lower() in SOURCE_EXTS],
+            key=lambda f: len(f.parts)
+        )
+        for f in src_files:
+            if len(chosen) >= MAX_KEY_FILES: break
+            if any(kw in f.name.lower() for kw in keywords) and str(f) not in seen:
+                chosen.append(f); seen.add(str(f))
 
     result = []
     for f in chosen[:MAX_KEY_FILES]:
+        txt = _read_file_safe(f, MAX_FILE_PREVIEW)
+        if txt is None: continue
         try:
-            file_lines = f.read_text(encoding='utf-8', errors='ignore').splitlines()
-            preview    = '\n'.join(file_lines[:MAX_FILE_PREVIEW])
-            rel        = str(f.relative_to(root))
-            result.append({"path": rel, "lines": len(file_lines), "preview": preview})
-        except Exception:
-            pass
-
+            total = len(f.read_text(encoding='utf-8', errors='ignore').splitlines())
+            rel   = str(f.relative_to(root))
+            result.append({"path": rel, "lines": total, "preview": txt})
+        except Exception: pass
     return result
 
 
@@ -255,27 +277,35 @@ def _detect_conventions(all_files: list[Path], key_files: list[dict]) -> dict:
     conventions = {}
 
     indent_spaces = indent_tabs = 0
-    for kf in key_files[:6]:
-        for line in kf["preview"].splitlines()[:30]:
+    for kf in key_files[:8]:
+        for line in kf["preview"].splitlines()[:40]:
             if line.startswith('    '): indent_spaces += 1
             elif line.startswith('\t'): indent_tabs += 1
     conventions["indent"] = "4 spaces" if indent_spaces >= indent_tabs else (
         "tabs" if indent_tabs > 0 else "2 spaces"
     )
 
-    has_src = any('src' in str(f) for f in all_files[:50])
-    has_pkg = any('com.' in str(f) or 'org.' in str(f) for f in all_files[:50])
+    # Kiem tra toan bo path, khong gioi han 50
+    sep      = os.sep
+    paths    = [str(f) for f in all_files]
+    has_main = any(f'{sep}main{sep}java' in p or f'{sep}main{sep}kotlin' in p for p in paths)
+    has_pkg  = any(f'{sep}com{sep}' in p or f'{sep}org{sep}' in p for p in paths)
+    has_src  = any(f'{sep}src{sep}' in p for p in paths)
     conventions["structure"] = (
-        "Maven/Gradle standard (src/main/java)" if has_pkg else
-        "src/ based" if has_src else
-        "flat"
+        "Maven/Gradle standard (src/main/java)" if has_main or has_pkg else
+        "src/ based" if has_src else "flat"
     )
 
-    java_stems = [f.stem for f in all_files if f.suffix in ('.java', '.kt')][:30]
+    java_stems = [f.stem for f in all_files if f.suffix in ('.java', '.kt')]
     naming = []
-    if any('Impl' in n for n in java_stems):            naming.append("ServiceImpl pattern")
-    if any('Dto' in n or 'DTO' in n for n in java_stems): naming.append("DTO objects")
-    if any('Vo' in n or 'VO' in n for n in java_stems):   naming.append("Value Objects")
+    for check, label in [
+        (lambda n: 'Impl'       in n, "ServiceImpl pattern"),
+        (lambda n: 'Dto' in n or 'DTO' in n, "DTO objects"),
+        (lambda n: 'Entity'     in n, "Entity classes"),
+        (lambda n: 'Repository' in n, "Repository pattern"),
+    ]:
+        if any(check(n) for n in java_stems):
+            naming.append(label)
     if naming:
         conventions["naming"] = ", ".join(naming)
 
@@ -394,37 +424,33 @@ def _save_cache(cache: dict) -> None:
 # --- Public API ---------------------------------------------------------------
 
 def scan_project(project_path: str, force: bool = False) -> dict:
-    """
-    Scan project va tra ve context dict. Co cache theo project hash.
-    force=True de re-scan du cache con hop le.
-    """
-    root  = Path(project_path).resolve()
-    cache = _load_cache()
-    key   = str(root)
-    phash = _project_hash(root)
+    root      = Path(project_path).resolve()
+    cache     = _load_cache()
+    key       = str(root)
+    all_files = _collect_files(root)
+    phash     = _project_hash(root, all_files)   # hash toan bo, khong gioi han
 
     if not force and key in cache and cache[key].get("hash") == phash:
-        print(f"[ProjectContext] Cache hit: {root.name}")
+        print(f"[ProjectContext] Cache hit: {root.name} ({len(all_files)} files)")
         return cache[key]["context"]
 
-    print(f"[ProjectContext] Scanning: {root}")
-    all_files    = _collect_files(root)
-    stack        = _detect_stack(root, all_files)
-    key_files    = _pick_key_files(root, all_files, stack)
+    print(f"[ProjectContext] Scanning: {root} ({len(all_files)} files)")
+    name_idx     = _build_name_index(all_files)        # build 1 lan, dung lai
+    stack        = _detect_stack(root, all_files, name_idx)
+    key_files    = _pick_key_files(root, all_files, name_idx, stack)
     conventions  = _detect_conventions(all_files, key_files)
     features_raw = _describe_features(root, all_files, key_files, stack)
 
     features_data: dict = {}
     if features_raw:
-        try:
-            features_data = json.loads(features_raw)
-        except Exception:
-            pass
+        try: features_data = json.loads(features_raw)
+        except Exception: pass
 
+    # Chi dem SOURCE_EXTS cho ext_stats
     ext_count: dict[str, int] = {}
     for f in all_files:
         ext = f.suffix.lower()
-        if ext:
+        if ext in SOURCE_EXTS:
             ext_count[ext] = ext_count.get(ext, 0) + 1
 
     ctx = {
@@ -437,10 +463,9 @@ def scan_project(project_path: str, force: bool = False) -> dict:
         "key_files":    key_files,
         "ext_stats":    dict(sorted(ext_count.items(), key=lambda x: x[1], reverse=True)[:10]),
     }
-
     cache[key] = {"hash": phash, "context": ctx}
     _save_cache(cache)
-    print(f"[ProjectContext] Done: {len(all_files)} files, frameworks={stack['frameworks']}, features={len(features_data.get('features', []))}")
+    print(f"[ProjectContext] Done: frameworks={stack['frameworks']}, features={len(features_data.get('features', []))}")
     return ctx
 
 

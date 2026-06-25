@@ -27,7 +27,7 @@ MAX_STEPS         = 10
 TREE_BUDGET      = 1_500
 CONTEXT_BUDGET   = 2_500
 FILE_CONTENT_MAX = 1_000
-HISTORY_BUDGET   = 3_000
+HISTORY_BUDGET   = 1_000
 
 SYSTEM_BASE = """Bạn là AI Developer Agent — senior engineer chuyên Java/Spring Boot, microservices, cloud-native.
 Trả lời bằng tiếng Việt. Code phải đầy đủ, không placeholder. Giải thích WHY.
