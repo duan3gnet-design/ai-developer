@@ -318,7 +318,7 @@ def _build_system(project_path: Optional[str], file_contexts: list,
                   message: str, system_fn) -> tuple:
     """Build system + messages, inject tree + file contexts + experiences."""
     root   = os.path.abspath(project_path) if project_path else None
-    system = system_fn(root) if root else SYSTEM_BASE
+    system = system_fn(root) if root and system_fn else SYSTEM_BASE
     if root:
         tree = _compact_tree(root, TREE_BUDGET)
         system += f"\n\n## FILE TREE (toàn bộ path tuyệt đối):\n{tree}"
@@ -360,11 +360,8 @@ class AIAgent:
         yield {"type": "intent", "data": {"needs_edit": needs_edit}}
 
         if not needs_edit:
-            # Chat thuần túy: bỏ qua PLAN/EXECUTE, không cần inject file tree/project context nặng
-            chat_sys = SYSTEM_BASE
-            opened_ctx = _trim_file_contexts(file_contexts, CONTEXT_BUDGET, message)
-            if opened_ctx:
-                chat_sys += f"\n\n## Files đang mở:{opened_ctx}"
+            # Chat thuần túy: bỏ qua PLAN/EXECUTE
+            chat_sys, _ = _build_system(root, file_contexts, message, None)
             chat_msgs = _trim_history(history, HISTORY_BUDGET) + [{"role": "user", "content": message}]
             reply = _call_plain(chat_sys, chat_msgs)
             yield {"type": "done", "data": {
