@@ -276,7 +276,7 @@ async def read_project(path: str, max_files: int = 50):
 
 @app.post("/project-context/scan")
 def scan_project_context(req: ScanContextRequest):
-    """Scan project để xây dựng context (stack, conventions, key files). Có cache."""
+    """Scan project để xây dựng context (stack, conventions, features). Có cache."""
     try:
         ctx = scan_project(req.project_path, force=req.force)
         # Loại preview dài khỏi response — chỉ trả metadata
@@ -286,10 +286,6 @@ def scan_project_context(req: ScanContextRequest):
             "stack":        ctx["stack"],
             "conventions":  ctx["conventions"],
             "features":     ctx.get("features", {}),
-            "key_files":    [
-                {"path": kf["path"], "lines": kf["lines"]}
-                for kf in ctx.get("key_files", [])
-            ],
             "ext_stats":    ctx["ext_stats"],
         }
         return {"context": summary, "cached": not req.force}

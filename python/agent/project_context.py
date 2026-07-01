@@ -44,7 +44,6 @@ SOURCE_EXTS = {
     '.go', '.rs', '.cs', '.cpp', '.c', '.rb', '.php', '.swift',
 }
 MAX_FILE_PREVIEW = 60
-MAX_KEY_FILES    = 12
 
 # --- Helpers ------------------------------------------------------------------
 
@@ -217,68 +216,36 @@ def _detect_stack(root: Path, all_files: list[Path], name_idx: dict) -> dict:
     return stack
 
 
-# --- Detector: Key files ------------------------------------------------------
+# --- Helper: sample source files (thay the key_files) ------------------------
 
-def _pick_key_files(root: Path, all_files: list[Path],
-                    name_idx: dict, stack: dict) -> list[dict]:
-    """
-    Dung name_idx O(1). Uu tien file gan root (depth nho).
-    Tranh chon nhieu file cung ten o nested folder.
-    """
-    priority_names = [
-        'pom.xml','build.gradle','build.gradle.kts','package.json',
-        'application.yml','application.yaml','application.properties',
-        'docker-compose.yml','docker-compose.yaml','dockerfile',
-        '.env','.env_exemple','requirements.txt','pyproject.toml',
-        'main.py','app.py','server.py',
-        'Main.java','Application.java',
-        'index.js','index.ts','main.ts','main.js','main.jsx',
-        'router.js','router.ts','routes.py','urls.py',
-        'settings.py','config.py',
-    ]
-    chosen: list[Path] = []
-    seen:   set[str]   = set()
-
-    for name in priority_names:
-        if len(chosen) >= MAX_KEY_FILES: break
-        candidates = sorted(name_idx.get(name.lower(), []), key=lambda p: len(p.parts))
-        if candidates:
-            p = candidates[0]
-            if str(p) not in seen:
-                chosen.append(p); seen.add(str(p))
-
-    if len(chosen) < MAX_KEY_FILES:
-        keywords  = ['service','controller','repository','agent','gateway',
-                     'handler','middleware','store','hook','filter','interceptor']
-        src_files = sorted(
-            [f for f in all_files if f.suffix.lower() in SOURCE_EXTS],
-            key=lambda f: len(f.parts)
-        )
-        for f in src_files:
-            if len(chosen) >= MAX_KEY_FILES: break
-            if any(kw in f.name.lower() for kw in keywords) and str(f) not in seen:
-                chosen.append(f); seen.add(str(f))
-
+def _pick_sample_files(all_files: list[Path], keywords: list[str], limit: int = 5) -> list[Path]:
+    """Lay mot vai source file gan root nhat, khop tu khoa (service, controller...)."""
+    src_files = sorted(
+        [f for f in all_files if f.suffix.lower() in SOURCE_EXTS],
+        key=lambda f: len(f.parts)
+    )
     result = []
-    for f in chosen[:MAX_KEY_FILES]:
-        txt = _read_file_safe(f, MAX_FILE_PREVIEW)
-        if txt is None: continue
-        try:
-            total = len(f.read_text(encoding='utf-8', errors='ignore').splitlines())
-            rel   = str(f.relative_to(root))
-            result.append({"path": rel, "lines": total, "preview": txt})
-        except Exception: pass
+    for f in src_files:
+        if any(kw in f.name.lower() for kw in keywords):
+            result.append(f)
+        if len(result) >= limit:
+            break
     return result
 
 
 # --- Detector: Conventions ----------------------------------------------------
 
-def _detect_conventions(all_files: list[Path], key_files: list[dict]) -> dict:
+def _detect_conventions(all_files: list[Path]) -> dict:
     conventions = {}
 
+    sample_files = sorted(
+        [f for f in all_files if f.suffix.lower() in SOURCE_EXTS],
+        key=lambda f: len(f.parts)
+    )[:8]
     indent_spaces = indent_tabs = 0
-    for kf in key_files[:8]:
-        for line in kf["preview"].splitlines()[:40]:
+    for f in sample_files:
+        txt = _read_file_safe(f, max_lines=40) or ''
+        for line in txt.splitlines():
             if line.startswith('    '): indent_spaces += 1
             elif line.startswith('\t'): indent_tabs += 1
     conventions["indent"] = "4 spaces" if indent_spaces >= indent_tabs else (
@@ -314,7 +281,7 @@ def _detect_conventions(all_files: list[Path], key_files: list[dict]) -> dict:
 
 # --- LLM: Feature description -------------------------------------------------
 
-def _describe_features(root: Path, all_files: list[Path], key_files: list[dict], stack: dict) -> str:
+def _describe_features(root: Path, all_files: list[Path], stack: dict) -> str:
     """
     Dung LLM de tom tat cac tinh nang chinh cua project.
     Uu tien doc README, sau do dung key files lam context.
@@ -342,14 +309,13 @@ def _describe_features(root: Path, all_files: list[Path], key_files: list[dict],
         if sections:
             break
 
-    # 2. Key files (service, controller, router...)
+    # 2. Sample source files (service, controller, router...)
     code_snippets: list[str] = []
     priority_kw = ['service', 'controller', 'router', 'routes', 'agent', 'handler', 'api']
-    for kf in key_files:
-        if any(kw in kf['path'].lower() for kw in priority_kw):
-            code_snippets.append("### " + kf['path'] + ":\n" + kf['preview'][:500])
-        if len(code_snippets) >= 5:
-            break
+    for f in _pick_sample_files(all_files, priority_kw, limit=5):
+        txt = _read_file_safe(f, max_lines=30) or ''
+        rel = str(f.relative_to(root))
+        code_snippets.append("### " + rel + ":\n" + txt[:500])
 
     if code_snippets:
         sections.append("## Code snippets:\n" + "\n\n".join(code_snippets))
@@ -437,9 +403,8 @@ def scan_project(project_path: str, force: bool = False) -> dict:
     print(f"[ProjectContext] Scanning: {root} ({len(all_files)} files)")
     name_idx     = _build_name_index(all_files)        # build 1 lan, dung lai
     stack        = _detect_stack(root, all_files, name_idx)
-    key_files    = _pick_key_files(root, all_files, name_idx, stack)
-    conventions  = _detect_conventions(all_files, key_files)
-    features_raw = _describe_features(root, all_files, key_files, stack)
+    conventions  = _detect_conventions(all_files)
+    features_raw = _describe_features(root, all_files, stack)
 
     features_data: dict = {}
     if features_raw:
@@ -460,7 +425,6 @@ def scan_project(project_path: str, force: bool = False) -> dict:
         "stack":        stack,
         "conventions":  conventions,
         "features":     features_data,
-        "key_files":    key_files,
         "ext_stats":    dict(sorted(ext_count.items(), key=lambda x: x[1], reverse=True)[:10]),
     }
     cache[key] = {"hash": phash, "context": ctx}
@@ -472,7 +436,7 @@ def scan_project(project_path: str, force: bool = False) -> dict:
 def build_context_prompt(ctx: dict, budget: int = 2500) -> str:
     """
     Chuyen project context thanh doan text inject vao system prompt.
-    Thu tu: features -> stack -> conventions -> key files.
+    Thu tu: features -> stack -> conventions.
     budget: gioi han ky tu toi da.
     """
     if not ctx:
@@ -511,19 +475,6 @@ def build_context_prompt(ctx: dict, budget: int = 2500) -> str:
         if conv.get("naming"):    conv_parts.append(conv["naming"])
         if conv_parts:
             lines.append("Conventions: " + " | ".join(conv_parts))
-
-    lines.append("\nKey files (preview):")
-
-    # --- Key files preview ---
-    used      = sum(len(l) for l in lines)
-    key_files = ctx.get("key_files", [])
-    for idx, kf in enumerate(key_files):
-        chunk = f"\n[{kf['path']} ({kf['lines']} lines)]\n```\n{kf['preview'][:400]}\n```"
-        if used + len(chunk) > budget:
-            lines.append(f"\n(+{len(key_files) - idx} files nua, da dat gioi han)")
-            break
-        lines.append(chunk)
-        used += len(chunk)
 
     return "\n".join(lines)
 

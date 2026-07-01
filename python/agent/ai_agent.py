@@ -272,7 +272,7 @@ def _build_system(project_path: Optional[str], file_contexts: list,
     ctx = _trim_file_contexts(file_contexts, CONTEXT_BUDGET, message)
     if ctx:
         system += f"\n\n## Files đang mở:{ctx}"
-    # Inject project context (stack, conventions, key files)
+    # Inject project context (stack, conventions, features)
     if root:
         try:
             proj_ctx   = scan_project(root)
