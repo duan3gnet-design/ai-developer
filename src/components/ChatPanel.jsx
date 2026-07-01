@@ -314,7 +314,7 @@ export default function ChatPanel() {
     if (cancelRef.current) cancelRef.current.cancel()
 
     setThinking(true)
-    setThinkLabel('Đang lập kế hoạch...')
+    setThinkLabel('Đang kiểm tra yêu cầu...')
 
     // Thêm AI message placeholder
     const { messages: cur, fileContexts: ctx, projectPath: proj } = useAppStore.getState()
@@ -335,7 +335,10 @@ export default function ChatPanel() {
     const stream = agentApi.chatStream(userMsg, ctx, history, proj, (event) => {
       const { type, data } = event
 
-      if (type === 'plan') {
+      if (type === 'intent') {
+        setThinkLabel(data.needs_edit ? 'Đang lập kế hoạch...' : 'Đang trả lời...')
+
+      } else if (type === 'plan') {
         setThinkLabel(data.is_complex ? `Lập kế hoạch: ${data.steps?.length} bước` : 'Đang xử lý...')
         patchAiMsg({
           plan:      data.summary,

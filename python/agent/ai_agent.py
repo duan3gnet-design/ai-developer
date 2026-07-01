@@ -261,6 +261,59 @@ def _parse(raw: str) -> dict:
         return {"reply": raw, "files_to_write": [], "files_to_delete": []}
 
 
+def _classify_intent_system() -> str:
+    return """Bạn là bộ phân loại ý định (intent classifier).
+Xác định tin nhắn của user có cần TẠO/SỬA/XÓA file code hay không.
+
+Trả về JSON: {"needs_edit": true/false}
+
+- true: yêu cầu viết code mới, sửa/thêm tính năng, fix bug, refactor, xóa file, tạo project...
+- false: chỉ hỏi/giải thích/phân tích, chat thông thường, hỏi kiến thức, không cần đụng file
+
+Chỉ JSON, không text khác. /no_think"""
+
+
+def _classify_needs_edit(message: str, history: list) -> bool:
+    """
+    Goi mot request nhe (max_tokens thap) de phan loai truoc khi vao PLAN.
+    Mac dinh True neu loi/khong chac chan, tranh bo sot yeu cau sua file.
+    """
+    msgs = _trim_history(history, 300) + [{"role": "user", "content": message}]
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL,
+            max_tokens=50,
+            messages=[{"role": "system", "content": _classify_intent_system()}] + msgs,
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content)
+        return bool(data.get("needs_edit", True))
+    except Exception as e:
+        print(f"[Intent] classify error: {e} -> default needs_edit=True")
+        return True
+
+
+def _call_plain(system: str, messages: list) -> str:
+    """Goi LLM tra loi text thuong (khong ep JSON) - dung cho chat thuan, khong sua file."""
+    max_tok = _safe_max_tokens(system, messages)
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL, max_tokens=max_tok,
+            messages=[{"role": "system", "content": system}] + messages,
+        )
+        u = resp.usage
+        print(f"[Token] prompt={u.prompt_tokens} completion={u.completion_tokens} total={u.total_tokens}")
+        return resp.choices[0].message.content
+    except Exception as e:
+        if e.status_code == 401:
+            return "❌ Lỗi xác thực GROQ_API_KEY. Kiểm tra file .env"
+        elif e.status_code == 429:
+            return "⏳ Rate limit. Thử lại sau vài giây."
+        elif e.status_code == 413:
+            return "⚠️ Prompt quá dài. Đóng bớt file context hoặc nhấn New Chat."
+        return f"❌ Lỗi: {str(e)}"
+
+
 def _build_system(project_path: Optional[str], file_contexts: list,
                   message: str, system_fn) -> tuple:
     """Build system + messages, inject tree + file contexts + experiences."""
@@ -301,6 +354,23 @@ class AIAgent:
     ) -> AsyncGenerator[dict, None]:
 
         root = os.path.abspath(project_path) if project_path else None
+
+        # ── PHASE 0: INTENT CHECK — có cần sửa file không? ──────────────────────
+        needs_edit = _classify_needs_edit(message, history)
+        yield {"type": "intent", "data": {"needs_edit": needs_edit}}
+
+        if not needs_edit:
+            # Chat thuần túy: bỏ qua PLAN/EXECUTE, không cần inject file tree/project context nặng
+            chat_sys = SYSTEM_BASE
+            opened_ctx = _trim_file_contexts(file_contexts, CONTEXT_BUDGET, message)
+            if opened_ctx:
+                chat_sys += f"\n\n## Files đang mở:{opened_ctx}"
+            chat_msgs = _trim_history(history, HISTORY_BUDGET) + [{"role": "user", "content": message}]
+            reply = _call_plain(chat_sys, chat_msgs)
+            yield {"type": "done", "data": {
+                "reply": reply, "files_to_write": [], "files_to_delete": [],
+            }}
+            return
 
         # ── PHASE 1: PLAN ─────────────────────────────────────────────────────
         plan_sys, _ = _build_system(root, [], message, _plan_system)
